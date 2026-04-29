@@ -1,0 +1,44 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: graduation-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootroot}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-koppps}
+      MYSQL_USER: ${MYSQL_USER:-koppps}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-rootroot}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    command: --default-authentication-plugin=mysql_native_password
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: graduation-backend
+    restart: unless-stopped
+    depends_on:
+      - mysql
+    environment:
+      SQLALCHEMY_DATABASE_URI: ${SQLALCHEMY_DATABASE_URI:-mysql+pymysql://koppps:rootroot@mysql:3306/koppps?charset=utf8mb4}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-this-in-production}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:30b}
+    volumes:
+      - ./static/uploads:/app/static/uploads
+    expose:
+      - "5000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: graduation-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  mysql_data:

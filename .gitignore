@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.pytest_cache/
+pytest-cache-files-*/
+tests/__pycache__/
+tests/.pytest_tmp/
+tests/_runtime/
+
+# PyCharm
+.idea/
+
+# OS
+.DS_Store
+
+# Frontend
+frontend/build/
+frontend/node_modules/
+frontend/playwright-report/
+frontend/test-results/
+frontend/.cache/
+frontend/.vite/
+frontend/.playwright/
+frontend/coverage/
+static/uploads/resources/
+
+# Temporary browser/test artifacts
+.playwright/
+playwright-report/
+test-results/
+coverage/

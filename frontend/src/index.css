@@ -1,0 +1,97 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Noto+Sans+SC:wght@400;500;700&display=swap');
+
+:root {
+  --bg: #f6f2e9;
+  --bg-elevated: #fffdf8;
+  --text: #1e1b16;
+  --text-muted: #676257;
+  --line: #dfd7c8;
+  --accent: #7f5f3b;
+  --accent-soft: #efe7da;
+  --success: #2f6b43;
+  --shadow-soft: 0 14px 40px rgba(31, 24, 13, 0.07);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 20% 10%, rgba(169, 140, 94, 0.08), transparent 40%),
+    radial-gradient(circle at 90% 90%, rgba(137, 160, 120, 0.09), transparent 38%),
+    var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, .display-font {
+  font-family: 'Fraunces', 'Noto Serif SC', serif;
+  letter-spacing: 0.01em;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+}
+
+.app-shell {
+  background: transparent;
+}
+
+.surface-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow-soft);
+}
+
+/* Global fallback: avoid pure white blocks in sub pages */
+.app-shell .bg-white {
+  background-color: var(--bg-elevated) !important;
+}
+
+/* Unified form surface for all pages */
+.app-shell input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']),
+.app-shell select,
+.app-shell textarea {
+  background: #fcf8ef;
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.app-shell input::placeholder,
+.app-shell textarea::placeholder {
+  color: #9b907f;
+}
+
+/* Table sections should also follow warm surface tone */
+.app-shell thead.bg-gray-50 {
+  background-color: #f2ebdf !important;
+}
+
+.panel-title {
+  font-family: 'Fraunces', 'Noto Serif SC', serif;
+  color: var(--text);
+  font-size: 1.15rem;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d3c7b3;
+  border-radius: 999px;
+}
