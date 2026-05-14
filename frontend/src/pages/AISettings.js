@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
-
-const API_BASE = '/api';
+import { API_BASE } from '../api';
 
 const defaultForm = {
   provider_type: 'ollama',

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Users, Plus, Trash2, KeyRound } from 'lucide-react';
+import { apiUrl } from '../api';
 
 const confirmDelete = (message) => {
   if (!window.confirm(message)) return false;
@@ -15,7 +16,7 @@ const UserManagement = () => {
 
   const fetchUsers = async () => {
     try {
-      const res = await axios.get('/api/admin/users');
+      const res = await axios.get(apiUrl('/admin/users'));
       setUsers(Array.isArray(res.data.data) ? res.data.data : []);
     } catch (err) {
       console.error(err);
@@ -28,7 +29,7 @@ const UserManagement = () => {
   const handleAddUser = async (e) => {
     e.preventDefault();
     try {
-      await axios.post('/api/admin/users', newUser);
+      await axios.post(apiUrl('/admin/users'), newUser);
       alert('用户创建成功');
       setShowAddForm(false);
       setNewUser({ username: '', password: '', role: 'student', name: '', major: '人工智能', class_name: '人工智能1班' });
@@ -47,7 +48,7 @@ const UserManagement = () => {
     if (!confirmDelete(`确定删除用户“${user.username}”吗？`)) return;
 
     try {
-      await axios.delete(`/api/admin/users/${user.id}`);
+      await axios.delete(apiUrl(`/admin/users/${user.id}`));
       alert('用户已删除');
       fetchUsers();
     } catch (err) {
@@ -58,7 +59,7 @@ const UserManagement = () => {
   const handleResetPassword = async (user) => {
     if (!window.confirm(`确定将用户“${user.username}”的密码重置为 123 吗？`)) return;
     try {
-      await axios.post(`/api/admin/users/${user.id}/reset-password`);
+      await axios.post(apiUrl(`/admin/users/${user.id}/reset-password`));
       alert('密码已重置为 123');
     } catch (err) {
       alert('重置失败: ' + (err.response?.data?.msg || err.message));
@@ -70,21 +71,21 @@ const UserManagement = () => {
   }, []);
 
   return (
-    <div className="surface-card p-6">
+    <div className="surface-card motion-panel p-6">
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-xl font-bold flex items-center gap-2 text-gray-800">
           <Users size={20} /> 用户管理
         </h2>
         <button
           onClick={() => setShowAddForm(!showAddForm)}
-          className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 flex items-center gap-1 text-sm transition-colors"
+          className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 flex items-center gap-1 text-sm transition-all duration-300 hover:-translate-y-0.5"
         >
           <Plus size={16} /> {showAddForm ? '取消添加' : '添加用户'}
         </button>
       </div>
 
       {showAddForm && (
-        <div className="mb-8 p-6 bg-gray-50 rounded-xl border border-indigo-100 animate-fade-in">
+        <div className="mb-8 p-6 bg-gray-50 rounded-xl border border-indigo-100 motion-panel">
           <h3 className="font-bold text-gray-700 mb-4">添加新用户</h3>
           <form onSubmit={handleAddUser} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-7 gap-4 items-end">
             <div>
@@ -189,7 +190,7 @@ const UserManagement = () => {
                 </tr>
               ) : (
                 users.map((u) => (
-                  <tr key={u.id} className="hover:bg-gray-50 transition-colors">
+                  <tr key={u.id} className="hover:bg-gray-50 transition-colors duration-300">
                     <td className="p-4 text-gray-500">#{u.id}</td>
                     <td className="p-4 font-medium text-gray-900">{u.username}</td>
                     <td className="p-4 text-gray-700">{u.name || '-'}</td>

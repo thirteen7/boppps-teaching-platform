@@ -1,22 +1,60 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
-import { FileText, Link as LinkIcon, Upload, RefreshCw, Trash2 } from 'lucide-react';
+import { ExternalLink, Eye, FileText, Link as LinkIcon, Upload, RefreshCw, Trash2 } from 'lucide-react';
+import { API_BASE, API_ORIGIN } from '../api';
 
-const API_BASE = '/api';
-const API_HOST = '';
+const API_HOST = API_ORIGIN;
 
 const filenameWithoutExt = (filename = '') => filename.replace(/\.[^/.]+$/, '') || filename;
-const getFileExt = (resource) => ((resource?.url || resource?.name || '').split('?')[0].toLowerCase().split('.').pop() || '');
+const getFileExt = (resource) => {
+  const explicitExt = (resource?.file_ext || '').toLowerCase();
+  if (explicitExt) {
+    return explicitExt.startsWith('.') ? explicitExt.slice(1) : explicitExt;
+  }
+  return ((resource?.url || resource?.name || '').split('?')[0].toLowerCase().split('.').pop() || '');
+};
+const getMimeType = (resource) => (resource?.mime_type || '').toLowerCase();
 const isOfficeDoc = (ext) => ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes(ext);
+const isInlinePreviewable = (ext) => ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'txt', 'md', 'csv', 'json'].includes(ext);
+const canPreviewResource = (resource) => {
+  if (!resource) return false;
+  const ext = getFileExt(resource);
+  const mimeType = getMimeType(resource);
+  const localPreviewable = isInlinePreviewable(ext) || isOfficeDoc(ext) || mimeType === 'application/json';
+  if (typeof resource.can_preview === 'boolean') return resource.can_preview || localPreviewable;
+  if (resource.type === 'link') return false;
+  return localPreviewable;
+};
+const openResourceInPlace = (href) => {
+  if (!href || href === '#') return;
+  window.location.assign(href);
+};
+const triggerDownload = async (resource, href) => {
+  if (!href || href === '#') return;
+  const response = await fetch(href);
+  if (!response.ok) {
+    throw new Error(`下载失败: ${response.status}`);
+  }
+  const blob = await response.blob();
+  const objectUrl = window.URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = resource?.download_name || resource?.name || 'resource';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.URL.revokeObjectURL(objectUrl);
+};
 
 const ResourcePreviewModal = ({ resource, href, onClose }) => {
   const [textContent, setTextContent] = useState('');
   const [textLoading, setTextLoading] = useState(false);
   const safeResource = resource || {};
   const ext = getFileExt(safeResource);
-  const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'].includes(ext);
-  const isPdf = ext === 'pdf';
-  const isText = ['txt', 'md', 'csv', 'json'].includes(ext);
+  const mimeType = getMimeType(safeResource);
+  const isImage = mimeType.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'].includes(ext);
+  const isPdf = mimeType === 'application/pdf' || ext === 'pdf';
+  const isText = mimeType.startsWith('text/') || ['txt', 'md', 'csv', 'json'].includes(ext);
   const officeViewUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(href)}`;
 
   useEffect(() => {
@@ -38,11 +76,11 @@ const ResourcePreviewModal = ({ resource, href, onClose }) => {
   if (!resource) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col">
+    <div className="fixed inset-0 bg-black/50 motion-overlay z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col motion-modal">
         <div className="px-4 py-3 border-b flex items-center justify-between">
           <div className="font-semibold text-gray-800">{resource.name}</div>
-          <button type="button" onClick={onClose} className="px-3 py-1 text-sm rounded border">Close</button>
+          <button type="button" onClick={onClose} className="px-3 py-1 text-sm rounded border">关闭</button>
         </div>
         <div className="flex-1 overflow-auto p-4">
           {isPdf && <iframe title={resource.name} src={href} className="w-full h-full min-h-[60vh] border" />}
@@ -51,12 +89,13 @@ const ResourcePreviewModal = ({ resource, href, onClose }) => {
           {isOfficeDoc(ext) && (
             <div className="space-y-3">
               <iframe title={`${resource.name}-office`} src={officeViewUrl} className="w-full h-[70vh] border" />
-              <p className="text-xs text-gray-500">If preview is blank, this file may not be publicly reachable by Office Online.</p>
+              <p className="text-xs text-gray-500">如果预览为空，通常是文件当前无法被 Office Online 直接访问。</p>
             </div>
           )}
           {!isPdf && !isImage && !isText && !isOfficeDoc(ext) && (
             <div className="text-gray-600">
-              Preview not supported. <a href={href} target="_blank" rel="noreferrer" className="text-indigo-600">Open/Download</a>
+              当前格式不支持站内预览。
+              <button type="button" onClick={() => openResourceInPlace(href)} className="text-indigo-600 ml-1">打开或下载</button>
             </div>
           )}
         </div>
@@ -138,6 +177,19 @@ const ResourceUpload = () => {
     }
   };
 
+  const handleOpenResource = async (resource) => {
+    const href = resource.type === 'link' ? getResourceHref(resource.url) : `${API_HOST}${resource.download_url || resource.preview_url || resource.url}`;
+    try {
+      if (resource.type === 'link') {
+        openResourceInPlace(href);
+        return;
+      }
+      await triggerDownload(resource, href);
+    } catch (err) {
+      alert(`打开资源失败: ${err.message}`);
+    }
+  };
+
   const getResourceHref = (url) => {
     if (!url) return '#';
     if (url.startsWith('http://') || url.startsWith('https://')) return url;
@@ -147,10 +199,10 @@ const ResourceUpload = () => {
 
   return (
     <div className="space-y-6">
-      <div className="surface-card p-6">
+      <div className="surface-card motion-panel p-6">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-bold flex items-center gap-2 text-gray-800"><Upload size={20} /> 统一资源上传</h2>
-          <button onClick={loadData} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">
+          <button onClick={loadData} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-all duration-300 hover:-translate-y-0.5">
             <RefreshCw size={16} /> 刷新
           </button>
         </div>
@@ -210,7 +262,7 @@ const ResourceUpload = () => {
         </form>
       </div>
 
-      <div className="surface-card p-6">
+      <div className="surface-card motion-panel p-6">
         <div className="flex items-center justify-between gap-3 mb-4">
           <div className="flex items-center gap-2 text-gray-800 font-bold text-xl"><FileText size={20} /> 文件库</div>
           <select className="p-2 border rounded-lg bg-white" value={filterCourseId} onChange={async (e) => { const value = e.target.value; setFilterCourseId(value); await fetchResources(value); }}>
@@ -224,9 +276,9 @@ const ResourceUpload = () => {
         ) : resources.length === 0 ? (
           <div className="py-10 text-center text-gray-400 border border-dashed rounded-xl">暂无资源</div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 stagger-group">
             {resources.map((resource) => (
-              <div key={resource.id} className="border border-gray-200 rounded-xl p-5 hover:shadow-sm transition-shadow">
+              <div key={resource.id} className="motion-card border border-gray-200 rounded-xl p-5 hover:shadow-sm transition-shadow">
                 <div className="flex items-start justify-between gap-3 mb-3">
                   <div>
                     <h3 className="font-bold text-gray-900">{resource.name}</h3>
@@ -244,12 +296,19 @@ const ResourceUpload = () => {
                 </div>
 
                 <div className="mt-4 flex items-center gap-4">
-                  <button type="button" onClick={() => setPreviewResource(resource)} className="inline-flex items-center gap-2 text-indigo-600 hover:text-indigo-800">
-                    <LinkIcon size={16} /> Preview
+                  {canPreviewResource(resource) && (
+                    <button type="button" onClick={() => setPreviewResource(resource)} className="inline-flex items-center gap-2 text-indigo-600 hover:text-indigo-800">
+                      <Eye size={16} /> 预览
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleOpenResource(resource)}
+                    className="inline-flex items-center gap-2 text-blue-600 hover:text-blue-800"
+                  >
+                    {resource.type === 'link' ? <ExternalLink size={16} /> : <LinkIcon size={16} />}
+                    {resource.type === 'link' ? '打开链接' : canPreviewResource(resource) ? '下载文件' : '打开/下载'}
                   </button>
-                  <a href={getResourceHref(resource.url)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-blue-600 hover:text-blue-800">
-                    <LinkIcon size={16} /> 查看资源
-                  </a>
                   <button type="button" onClick={() => handleDeleteResource(resource)} className="inline-flex items-center gap-2 text-red-600 hover:text-red-800">
                     <Trash2 size={16} /> 删除
                   </button>
@@ -262,7 +321,7 @@ const ResourceUpload = () => {
       {previewResource && (
         <ResourcePreviewModal
           resource={previewResource}
-          href={getResourceHref(previewResource.url)}
+          href={previewResource.type === 'link' ? getResourceHref(previewResource.url) : `${API_HOST}${previewResource.preview_url || previewResource.download_url || previewResource.url}`}
           onClose={() => setPreviewResource(null)}
         />
       )}

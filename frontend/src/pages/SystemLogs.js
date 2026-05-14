@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { Activity, RefreshCw, Search, ArrowUpDown, ChevronLeft, ChevronRight } from 'lucide-react';
-
-const API_BASE = '/api';
+import { API_BASE } from '../api';
 
 const SystemLogs = () => {
   const [logs, setLogs] = useState([]);
@@ -98,7 +97,7 @@ const SystemLogs = () => {
   };
 
   return (
-    <div className="surface-card p-6">
+    <div className="surface-card motion-panel p-6">
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-xl font-bold flex items-center gap-2 text-gray-800">
           <Activity size={20} />
@@ -113,7 +112,7 @@ const SystemLogs = () => {
           </button>
           <button
             onClick={() => fetchLogs(true)}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors disabled:opacity-60"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-all duration-300 hover:-translate-y-0.5 disabled:opacity-60"
             disabled={refreshing}
           >
             <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
@@ -123,15 +122,15 @@ const SystemLogs = () => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-        <div className="rounded-lg border border-gray-200 p-3">
+        <div className="motion-card rounded-lg border border-gray-200 p-3">
           <div className="text-xs text-gray-500">今日日志</div>
           <div className="text-xl font-semibold text-gray-800">{summary.today_count || 0}</div>
         </div>
-        <div className="rounded-lg border border-gray-200 p-3">
+        <div className="motion-card rounded-lg border border-gray-200 p-3">
           <div className="text-xs text-gray-500">近7天日志</div>
           <div className="text-xl font-semibold text-gray-800">{summary.week_count || 0}</div>
         </div>
-        <div className="rounded-lg border border-gray-200 p-3">
+        <div className="motion-card rounded-lg border border-gray-200 p-3">
           <div className="text-xs text-gray-500">活跃用户数</div>
           <div className="text-xl font-semibold text-gray-800">{summary.active_users || 0}</div>
         </div>
@@ -235,7 +234,7 @@ const SystemLogs = () => {
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {logs.map((log) => (
-                  <tr key={log.id} className="hover:bg-gray-50">
+                  <tr key={log.id} className="hover:bg-gray-50 transition-colors duration-300">
                     <td className="p-4 text-gray-800 font-medium">{log.username || '-'}</td>
                     <td className="p-4 text-gray-600">{log.action}</td>
                     <td className="p-4 text-gray-500 font-mono text-sm">{log.ip || '-'}</td>

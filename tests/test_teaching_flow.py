@@ -2,6 +2,9 @@ import io
 
 from sqlalchemy.exc import OperationalError
 
+from extensions import db
+from models import Assessment, BOPPPSContent, LessonPlan, QuestionBankItem, Resource
+
 
 def test_course_join_and_student_management_flow(client, auth_headers):
     teacher_headers = auth_headers("teacher")
@@ -526,6 +529,124 @@ def test_assessment_edit_then_push_flow(client, auth_headers):
     student_get_after_push = client.get(f"/api/teaching/assessments/{assessment_id}", headers=student_headers)
     assert student_get_after_push.status_code == 200
     assert student_get_after_push.get_json()["data"]["title"] == "Draft Quiz Updated"
+
+
+def test_delete_assessment_keeps_question_bank_items(client, auth_headers):
+    teacher_headers = auth_headers("teacher")
+
+    course_response = client.post("/api/teaching/courses", json={
+        "name": "Delete Quiz Course",
+        "objectives": "Keep bank items",
+    }, headers=teacher_headers)
+    course_id = course_response.get_json()["data"]["id"]
+
+    plan_response = client.post("/api/teaching/chapters", json={
+        "course_id": course_id,
+        "title": "Delete Quiz Chapter",
+    }, headers=teacher_headers)
+    plan_id = plan_response.get_json()["data"]["id"]
+
+    qb_create = client.post("/api/teaching/question-bank", json={
+        "course_id": course_id,
+        "chapter_id": plan_id,
+        "stem": "哪一个是队列特征？",
+        "options": ["先进先出", "后进先出"],
+        "answer": "先进先出",
+        "difficulty": 2,
+        "tags": ["队列"],
+    }, headers=teacher_headers)
+    assert qb_create.status_code == 201
+    qb_id = qb_create.get_json()["data"]["id"]
+
+    assessment_response = client.post("/api/teaching/assessments", json={
+        "chapter_id": plan_id,
+        "title": "Delete Me Quiz",
+        "type": "post_assessment",
+        "question_bank_ids": [qb_id],
+    }, headers=teacher_headers)
+    assert assessment_response.status_code == 201
+    assessment_id = assessment_response.get_json()["data"]["id"]
+
+    delete_response = client.delete(f"/api/teaching/assessments/{assessment_id}", headers=teacher_headers)
+    assert delete_response.status_code == 200
+
+    with client.application.app_context():
+        assert db.session.get(Assessment, assessment_id) is None
+        qb_item = db.session.get(QuestionBankItem, qb_id)
+        assert qb_item is not None
+        assert qb_item.stem == "哪一个是队列特征？"
+
+
+def test_delete_chapter_removes_resources_and_assessments_but_preserves_bank_items(client, auth_headers):
+    teacher_headers = auth_headers("teacher")
+
+    course_response = client.post("/api/teaching/courses", json={
+        "name": "Delete Chapter Course",
+        "objectives": "Cascade delete chapter assets",
+    }, headers=teacher_headers)
+    course_id = course_response.get_json()["data"]["id"]
+
+    plan_response = client.post("/api/teaching/chapters", json={
+        "course_id": course_id,
+        "title": "Delete Chapter",
+    }, headers=teacher_headers)
+    plan_id = plan_response.get_json()["data"]["id"]
+
+    resource_response = client.post("/api/teaching/resources", data={
+        "name": "Temporary Notes",
+        "type": "file",
+        "course_id": str(course_id),
+        "file": (io.BytesIO(b"temporary chapter notes"), "chapter-notes.txt"),
+    }, headers=teacher_headers, content_type="multipart/form-data")
+    assert resource_response.status_code == 201
+    resource_id = resource_response.get_json()["data"]["id"]
+
+    bind_response = client.put(
+        f"/api/teaching/chapters/{plan_id}/resources",
+        json={"resource_ids": [resource_id]},
+        headers=teacher_headers,
+    )
+    assert bind_response.status_code == 200
+
+    qb_create = client.post("/api/teaching/question-bank", json={
+        "course_id": course_id,
+        "chapter_id": plan_id,
+        "stem": "章节题库题",
+        "options": ["A", "B"],
+        "answer": "A",
+        "difficulty": 3,
+    }, headers=teacher_headers)
+    assert qb_create.status_code == 201
+    qb_id = qb_create.get_json()["data"]["id"]
+
+    assessment_response = client.post("/api/teaching/assessments", json={
+        "chapter_id": plan_id,
+        "title": "Chapter Quiz",
+        "type": "pre_assessment",
+        "questions": [{
+            "content": "章节测验题",
+            "q_type": "choice",
+            "options": ["A", "B"],
+            "answer": "A",
+        }],
+    }, headers=teacher_headers)
+    assert assessment_response.status_code == 201
+    assessment_id = assessment_response.get_json()["data"]["id"]
+
+    delete_response = client.delete(f"/api/teaching/chapters/{plan_id}", headers=teacher_headers)
+    assert delete_response.status_code == 200
+    payload = delete_response.get_json()["data"]
+    assert payload["resources"] == 1
+    assert payload["assessments"] == 1
+
+    with client.application.app_context():
+        assert db.session.get(LessonPlan, plan_id) is None
+        assert db.session.get(Assessment, assessment_id) is None
+        assert db.session.get(Resource, resource_id) is None
+        assert BOPPPSContent.query.filter_by(lesson_plan_id=plan_id).count() == 0
+        qb_item = db.session.get(QuestionBankItem, qb_id)
+        assert qb_item is not None
+        assert qb_item.chapter_id is None
 
 
 def test_generate_custom_uses_stage_assessment_basis(client, auth_headers, monkeypatch):

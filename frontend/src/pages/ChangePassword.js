@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import { Lock, Save } from 'lucide-react';
+import { apiUrl } from '../api';
 
 const ChangePassword = () => {
   const [data, setData] = useState({ old_password: '', new_password: '', confirm_password: '' });
@@ -14,7 +15,7 @@ const ChangePassword = () => {
     }
 
     try {
-      await axios.post('/api/auth/change-password', {
+      await axios.post(apiUrl('/auth/change-password'), {
         old_password: data.old_password,
         new_password: data.new_password,
       });

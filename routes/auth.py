@@ -9,6 +9,10 @@ import json
 auth_bp = Blueprint('auth', __name__)
 
 
+def _db_get(model, record_id):
+    return db.session.get(model, record_id)
+
+
 # 1. 用户注册 (开放给学生注册)
 @auth_bp.route('/register', methods=['POST'])
 def register():
@@ -78,7 +82,7 @@ def change_password():
     old_password = data.get('old_password')
     new_password = data.get('new_password')
 
-    user = User.query.get(user_id)
+    user = _db_get(User, user_id)
 
     if not user or not check_password_hash(user.password, old_password):
         return api_response(msg='原密码错误', code=400)

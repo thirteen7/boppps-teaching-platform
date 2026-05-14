@@ -1,9 +1,38 @@
+from datetime import UTC, datetime, timedelta, timezone
+
 from flask import request, jsonify
 from functools import wraps
 from flask_jwt_extended import get_jwt_identity, jwt_required
 from extensions import db
 from models import SystemLog
 import json
+
+SHANGHAI_TZ = timezone(timedelta(hours=8))
+
+
+def now_shanghai():
+    return datetime.now(SHANGHAI_TZ)
+
+
+def to_shanghai(dt):
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(SHANGHAI_TZ)
+
+
+def format_shanghai(dt, pattern='%Y-%m-%d %H:%M:%S'):
+    localized = to_shanghai(dt)
+    return localized.strftime(pattern) if localized else None
+
+
+def shanghai_to_utc_naive(dt):
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=SHANGHAI_TZ)
+    return dt.astimezone(UTC).replace(tzinfo=None)
 
 # 记录日志的辅助函数
 def log_action(user_id, username, action):

@@ -1,14 +1,14 @@
 import json
 from datetime import datetime, timedelta
 
-from flask import Blueprint, request
+from flask import Blueprint, abort, request
 from flask_jwt_extended import get_jwt_identity
 from werkzeug.security import generate_password_hash
 
 from extensions import db
 from models import User, SystemLog, AIProviderConfig
 from services.llm_service import LLMService
-from utils import admin_required, api_response, log_action
+from utils import admin_required, api_response, format_shanghai, log_action, now_shanghai, shanghai_to_utc_naive
 
 admin_bp = Blueprint('admin', __name__)
 
@@ -23,6 +23,13 @@ def _current_admin():
         except Exception:
             current_admin = {}
     return current_admin
+
+
+def _db_get_or_404(model, record_id):
+    record = db.session.get(model, record_id)
+    if record is None:
+        abort(404)
+    return record
 
 
 def _log_level(action):
@@ -46,7 +53,7 @@ def get_users():
             'name': user.name,
             'major': user.major,
             'class_name': user.class_name,
-            'created_at': user.created_at.strftime('%Y-%m-%d'),
+            'created_at': format_shanghai(user.created_at, '%Y-%m-%d'),
         }
         for user in users
     ]
@@ -86,7 +93,7 @@ def add_user():
 @admin_required()
 def delete_user(user_id):
     current_admin = _current_admin()
-    user = User.query.get_or_404(user_id)
+    user = _db_get_or_404(User, user_id)
 
     if user.username in DEFAULT_USERNAMES:
         return api_response(msg='Default users cannot be deleted', code=400)
@@ -106,7 +113,7 @@ def delete_user(user_id):
 @admin_required()
 def reset_user_password(user_id):
     current_admin = _current_admin()
-    user = User.query.get_or_404(user_id)
+    user = _db_get_or_404(User, user_id)
     user.password = generate_password_hash('123')
     db.session.commit()
     log_action(current_admin.get('id'), current_admin.get('username'), f'Reset password for user: {user.username}')
@@ -147,13 +154,13 @@ def get_logs():
 
     if date_from:
         try:
-            start_dt = datetime.strptime(date_from, '%Y-%m-%d')
+            start_dt = shanghai_to_utc_naive(datetime.strptime(date_from, '%Y-%m-%d'))
             query = query.filter(SystemLog.timestamp >= start_dt)
         except ValueError:
             pass
     if date_to:
         try:
-            end_dt = datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=1)
+            end_dt = shanghai_to_utc_naive(datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=1))
             query = query.filter(SystemLog.timestamp < end_dt)
         except ValueError:
             pass
@@ -182,14 +189,14 @@ def get_logs():
             'action': log.action,
             'ip': log.ip_address,
             'level': _log_level(log.action),
-            'time': log.timestamp.strftime('%Y-%m-%d %H:%M:%S'),
+            'time': format_shanghai(log.timestamp),
         }
         for log in logs
     ]
     if with_meta:
-        now = datetime.utcnow()
-        day_start = datetime(now.year, now.month, now.day)
-        week_start = now - timedelta(days=7)
+        now = now_shanghai()
+        day_start = shanghai_to_utc_naive(now.replace(hour=0, minute=0, second=0, microsecond=0))
+        week_start = shanghai_to_utc_naive(now - timedelta(days=7))
         active_users = db.session.query(SystemLog.username).filter(SystemLog.username.isnot(None)).distinct().count()
         return api_response(data={
             'items': items,
@@ -217,8 +224,8 @@ def _provider_to_dict(item):
         'enabled': bool(item.enabled),
         'is_default': bool(item.is_default),
         'extra_json': item.extra_json or {},
-        'created_at': item.created_at.strftime('%Y-%m-%d %H:%M:%S'),
-        'updated_at': item.updated_at.strftime('%Y-%m-%d %H:%M:%S'),
+        'created_at': format_shanghai(item.created_at),
+        'updated_at': format_shanghai(item.updated_at),
     }
 
 
@@ -268,7 +275,7 @@ def create_ai_provider():
 @admin_required()
 def update_ai_provider(provider_id):
     current_admin = _current_admin()
-    item = AIProviderConfig.query.get_or_404(provider_id)
+    item = _db_get_or_404(AIProviderConfig, provider_id)
     data = request.get_json(silent=True) or {}
 
     provider_type = data.get('provider_type')
@@ -304,7 +311,7 @@ def update_ai_provider(provider_id):
 @admin_required()
 def delete_ai_provider(provider_id):
     current_admin = _current_admin()
-    item = AIProviderConfig.query.get_or_404(provider_id)
+    item = _db_get_or_404(AIProviderConfig, provider_id)
     provider_name = item.name
     db.session.delete(item)
     db.session.commit()
@@ -316,7 +323,7 @@ def delete_ai_provider(provider_id):
 @admin_required()
 def test_ai_provider(provider_id):
     current_admin = _current_admin()
-    item = AIProviderConfig.query.get_or_404(provider_id)
+    item = _db_get_or_404(AIProviderConfig, provider_id)
     provider = {
         'provider_type': item.provider_type,
         'base_url': item.base_url,

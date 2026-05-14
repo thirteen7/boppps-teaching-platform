@@ -1,9 +1,11 @@
 import os
 import uuid
-from datetime import datetime
+import mimetypes
+from datetime import UTC, datetime
 from collections import defaultdict
+from urllib.parse import quote
 
-from flask import Blueprint, request
+from flask import Blueprint, abort, request, send_file
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import false, func
 from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
@@ -15,6 +17,17 @@ from config import Config
 import json
 
 teaching_bp = Blueprint('teaching', __name__)
+
+def _db_get(model, record_id):
+    return db.session.get(model, record_id)
+
+
+def _db_get_or_404(model, record_id):
+    record = db.session.get(model, record_id)
+    if record is None:
+        abort(404)
+    return record
+
 
 # BOPPPS 阶段默认模板
 BOPPPS_TEMPLATES = {
@@ -38,7 +51,7 @@ def _get_current_user():
 
 
 def _is_student_in_course(user_id, course_id):
-    user = User.query.get(user_id)
+    user = _db_get(User, user_id)
     if not user:
         return False
     return any(c.id == course_id for c in user.enrolled_courses)
@@ -65,7 +78,7 @@ def _can_manage_course(current_user, course):
 
 
 def _check_chapter_access_or_403(chapter, current_user):
-    course = Course.query.get_or_404(chapter.course_id)
+    course = _db_get_or_404(Course, chapter.course_id)
     permission_error = _check_course_access_or_403(course, current_user)
     if permission_error:
         return None, permission_error
@@ -92,21 +105,22 @@ def _generate_course_code():
 
 
 def _resource_payload(resource):
+    file_meta = _infer_resource_file_meta(resource)
     course_name = None
     uploader_name = None
     chapter_title = None
     chapter_ref_id = resource.chapter_id
 
     if resource.course_id:
-        course = Course.query.get(resource.course_id)
+        course = _db_get(Course, resource.course_id)
         course_name = course.name if course else None
 
     if resource.uploader_id:
-        uploader = User.query.get(resource.uploader_id)
+        uploader = _db_get(User, resource.uploader_id)
         uploader_name = uploader.name or uploader.username if uploader else None
 
     if chapter_ref_id:
-        lesson_plan = LessonPlan.query.get(chapter_ref_id)
+        lesson_plan = _db_get(LessonPlan, chapter_ref_id)
         chapter_title = lesson_plan.title if lesson_plan else None
 
     return {
@@ -114,6 +128,13 @@ def _resource_payload(resource):
         'name': resource.name,
         'type': resource.type,
         'url': resource.url,
+        'file_exists': bool(file_meta.get('file_path')) if resource.type == 'file' else True,
+        'mime_type': file_meta.get('mime_type'),
+        'file_ext': file_meta.get('file_ext'),
+        'download_name': file_meta.get('download_name'),
+        'can_preview': file_meta.get('can_preview', False),
+        'preview_url': f"/api/teaching/resources/{resource.id}/content" if resource.type == 'file' else None,
+        'download_url': f"/api/teaching/resources/{resource.id}/content?download=1" if resource.type == 'file' else None,
         'course_id': resource.course_id,
         'course_name': course_name,
         'knowledge_scope': 'chapter' if chapter_ref_id else 'course',
@@ -126,6 +147,120 @@ def _resource_payload(resource):
     }
 
 
+def _resource_file_path(resource):
+    if not resource or not resource.url:
+        return None
+    if not resource.url.startswith('/static/uploads/resources/'):
+        return None
+    filename = os.path.basename(resource.url)
+    file_path = os.path.join(Config.UPLOAD_FOLDER, filename)
+    return file_path if os.path.exists(file_path) else None
+
+
+def _looks_like_utf8_text(sample):
+    if not sample:
+        return False
+    try:
+        sample.decode('utf-8')
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
+def _infer_resource_file_meta(resource):
+    office_mime_map = {
+        '.doc': 'application/msword',
+        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        '.xls': 'application/vnd.ms-excel',
+        '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        '.ppt': 'application/vnd.ms-powerpoint',
+        '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        '.pdf': 'application/pdf',
+        '.txt': 'text/plain',
+        '.md': 'text/markdown',
+        '.csv': 'text/csv',
+        '.json': 'application/json',
+    }
+    file_path = _resource_file_path(resource)
+    file_ext = os.path.splitext(file_path)[1].lower() if file_path else ''
+    mime_type = office_mime_map.get(file_ext) if file_ext else None
+
+    if not mime_type and file_ext:
+        mime_type = mimetypes.guess_type(f"resource{file_ext}")[0]
+
+    if not mime_type and file_path:
+        try:
+            with open(file_path, 'rb') as fh:
+                sample = fh.read(2048)
+        except OSError:
+            sample = b''
+
+        if sample.startswith(b'%PDF'):
+            mime_type = 'application/pdf'
+            file_ext = file_ext or '.pdf'
+        elif _looks_like_utf8_text(sample):
+            mime_type = 'text/plain'
+            file_ext = file_ext or '.txt'
+        else:
+            mime_type = 'application/octet-stream'
+
+    download_name = (resource.name or 'resource').strip() or 'resource'
+    if file_ext and not os.path.splitext(download_name)[1]:
+        download_name = f"{download_name}{file_ext}"
+
+    previewable_mimes = {
+        'application/pdf',
+        'application/msword',
+        'application/vnd.ms-excel',
+        'application/vnd.ms-powerpoint',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    }
+    can_preview = bool(
+        resource
+        and resource.type == 'file'
+        and mime_type
+        and (
+            mime_type.startswith('text/')
+            or mime_type.startswith('image/')
+            or mime_type in previewable_mimes
+        )
+    )
+
+    return {
+        'file_path': file_path,
+        'file_ext': file_ext,
+        'mime_type': mime_type,
+        'download_name': download_name,
+        'can_preview': can_preview,
+    }
+
+
+def _check_resource_access_or_403(resource, current_user):
+    role = current_user.get('role')
+    user_id = current_user.get('id')
+
+    if role == 'admin':
+        return None
+
+    if resource.course_id:
+        course = _db_get(Course, resource.course_id)
+        if not course:
+            return api_response(msg='Course not found', code=404)
+        if role == 'teacher' and course.teacher_id != user_id:
+            return api_response(msg='Permission denied: invalid resource', code=403)
+        if role == 'student' and not _is_student_in_course(user_id, course.id):
+            return api_response(msg='Permission denied: invalid resource', code=403)
+        return None
+
+    if role == 'teacher' and resource.uploader_id != user_id:
+        return api_response(msg='Permission denied: invalid resource', code=403)
+    if role == 'student':
+        return api_response(msg='Permission denied: invalid resource', code=403)
+    return None
+
+
 def _extract_resource_input():
     content_type = request.content_type or ''
     if 'multipart/form-data' in content_type:
@@ -134,9 +269,9 @@ def _extract_resource_input():
 
 
 def _question_bank_payload(item):
-    creator = User.query.get(item.created_by)
-    course = Course.query.get(item.course_id)
-    chapter = LessonPlan.query.get(item.chapter_id) if item.chapter_id else None
+    creator = _db_get(User, item.created_by)
+    course = _db_get(Course, item.course_id)
+    chapter = _db_get(LessonPlan, item.chapter_id) if item.chapter_id else None
     linked_questions = Question.query.filter_by(question_bank_item_id=item.id).all()
     normalized_stem = _normalize_question_stem(item.stem)
     chapter_ids = [lp.id for lp in LessonPlan.query.filter_by(course_id=item.course_id).all()]
@@ -195,7 +330,7 @@ def _resolve_resource_context(data, current_user):
     if not course_id:
         return None, None, api_response(msg='Resource library requires course_id', code=400)
 
-    course = Course.query.get(course_id)
+    course = _db_get(Course, course_id)
     if not course:
         return None, None, api_response(msg='Course not found', code=404)
 
@@ -203,7 +338,7 @@ def _resolve_resource_context(data, current_user):
         return None, None, api_response(msg='Permission denied: invalid course', code=403)
 
     if chapter_id:
-        chapter = LessonPlan.query.get(chapter_id)
+        chapter = _db_get(LessonPlan, chapter_id)
         if not chapter or chapter.course_id != course_id:
             return None, None, api_response(msg='Chapter not found in course', code=404)
 
@@ -326,8 +461,8 @@ def _normalize_question_stem(stem):
 
 
 def _build_assessment_detail_analytics(assessment):
-    chapter = LessonPlan.query.get(assessment.lesson_plan_id)
-    course = Course.query.get(chapter.course_id) if chapter else None
+    chapter = _db_get(LessonPlan, assessment.lesson_plan_id)
+    course = _db_get(Course, chapter.course_id) if chapter else None
     submissions = Submission.query.filter_by(assessment_id=assessment.id, status='active').order_by(Submission.submitted_at.desc()).all()
     questions = assessment.questions or []
 
@@ -349,7 +484,7 @@ def _build_assessment_detail_analytics(assessment):
                 wrong_options_count[str(selected)] += 1
         accuracy = round((correct / attempts) * 100, 2) if attempts > 0 else None
         question_accuracy_map[q.id] = accuracy
-        qb_item = QuestionBankItem.query.get(q.question_bank_item_id) if q.question_bank_item_id else None
+        qb_item = _db_get(QuestionBankItem, q.question_bank_item_id) if q.question_bank_item_id else None
         question_stats.append({
             'question_id': q.id,
             'content': q.content,
@@ -365,7 +500,7 @@ def _build_assessment_detail_analytics(assessment):
 
     student_stats = []
     for sub in submissions:
-        student = User.query.get(sub.student_id)
+        student = _db_get(User, sub.student_id)
         answer_map = sub.answers or {}
         correct_count = 0
         for q in questions:
@@ -473,6 +608,48 @@ def _delete_resource_file_if_needed(resource):
                 pass
 
 
+def _delete_assessment_related_data(assessment):
+    if not assessment:
+        return
+
+    Submission.query.filter_by(assessment_id=assessment.id).delete(synchronize_session=False)
+    Question.query.filter_by(assessment_id=assessment.id).delete(synchronize_session=False)
+    db.session.flush()
+    db.session.delete(assessment)
+    db.session.flush()
+
+
+def _delete_chapter_related_data(chapter):
+    if not chapter:
+        return {'resources': 0, 'assessments': 0}
+
+    deleted_resources = 0
+    deleted_assessments = 0
+
+    chapter_resources = Resource.query.filter_by(course_id=chapter.course_id, chapter_id=chapter.id).all()
+    for resource in chapter_resources:
+        _delete_resource_file_if_needed(resource)
+        db.session.delete(resource)
+        deleted_resources += 1
+    db.session.flush()
+
+    assessments = Assessment.query.filter_by(lesson_plan_id=chapter.id).all()
+    for assessment in assessments:
+        _delete_assessment_related_data(assessment)
+        deleted_assessments += 1
+
+    BOPPPSContent.query.filter_by(lesson_plan_id=chapter.id).delete(synchronize_session=False)
+    QuestionBankItem.query.filter_by(chapter_id=chapter.id).update({'chapter_id': None}, synchronize_session=False)
+    db.session.flush()
+    db.session.delete(chapter)
+    db.session.flush()
+
+    return {
+        'resources': deleted_resources,
+        'assessments': deleted_assessments,
+    }
+
+
 def _delete_course_related_data(course):
     for resource in Resource.query.filter_by(course_id=course.id).all():
         _delete_resource_file_if_needed(resource)
@@ -480,17 +657,10 @@ def _delete_course_related_data(course):
     db.session.flush()
 
     for lesson_plan in LessonPlan.query.filter_by(course_id=course.id).all():
-        for assessment in Assessment.query.filter_by(lesson_plan_id=lesson_plan.id).all():
-            Submission.query.filter_by(assessment_id=assessment.id).delete(synchronize_session=False)
-            Question.query.filter_by(assessment_id=assessment.id).delete(synchronize_session=False)
-            db.session.flush()
-            db.session.delete(assessment)
-            db.session.flush()
+        _delete_chapter_related_data(lesson_plan)
 
-        BOPPPSContent.query.filter_by(lesson_plan_id=lesson_plan.id).delete(synchronize_session=False)
-        db.session.flush()
-        db.session.delete(lesson_plan)
-        db.session.flush()
+    QuestionBankItem.query.filter_by(course_id=course.id).delete(synchronize_session=False)
+    db.session.flush()
 
     course.students.clear()
     db.session.flush()
@@ -515,7 +685,7 @@ def create_course():
     elif data.get('teacher_id') and int(data.get('teacher_id')) != current_user.get('id'):
         return api_response(msg='教师只能创建并负责自己的课程', code=403)
 
-    teacher = User.query.get(assigned_teacher_id)
+    teacher = _db_get(User, assigned_teacher_id)
     if not teacher or teacher.role != 'teacher':
         return api_response(msg='无效的授课老师', code=400)
 
@@ -549,7 +719,7 @@ def get_courses():
     if role == 'teacher':
         courses = Course.query.filter_by(teacher_id=user_id).all()
     elif role == 'student':
-        user = User.query.get(user_id)
+        user = _db_get(User, user_id)
         courses = user.enrolled_courses
     else:
         courses = Course.query.all()
@@ -571,7 +741,7 @@ def get_courses():
 
     data = []
     for c in courses:
-        teacher = User.query.get(c.teacher_id) if c.teacher_id else None
+        teacher = _db_get(User, c.teacher_id) if c.teacher_id else None
         data.append({
             'id': c.id,
             'name': c.name,
@@ -588,7 +758,7 @@ def get_courses():
 @jwt_required()
 def delete_course(id):
     current_user = _get_current_user()
-    course = Course.query.get_or_404(id)
+    course = _db_get_or_404(Course, id)
 
     if current_user.get('role') == 'teacher' and course.teacher_id != current_user.get('id'):
         return api_response(msg='Permission denied: invalid course', code=403)
@@ -624,14 +794,14 @@ def join_course():
     if course_code:
         course = Course.query.filter(func.lower(Course.code) == course_code.lower()).first()
     elif course_id:
-        course = Course.query.get(course_id)
+        course = _db_get(Course, course_id)
     else:
         return api_response(msg='请提供课程代码', code=400)
 
     if not course:
         return api_response(msg='课程不存在', code=404)
 
-    user = User.query.get(current_user.get('id'))
+    user = _db_get(User, current_user.get('id'))
     if course in user.enrolled_courses:
         return api_response(msg='您已经加入了该课程', code=400)
 
@@ -647,7 +817,7 @@ def join_course():
 def manage_course_students(id):
     current_user = _get_current_user()
 
-    course = Course.query.get_or_404(id)
+    course = _db_get_or_404(Course, id)
 
     if not _can_manage_course(current_user, course):
         return api_response(msg='无权管理该课程的学生', code=403)
@@ -664,7 +834,7 @@ def manage_course_students(id):
     if request.method == 'POST':
         data = request.get_json()
         student_id = data.get('student_id')
-        student = User.query.get(student_id)
+        student = _db_get(User, student_id)
 
         if not student or student.role != 'student':
             return api_response(msg='无效的学生ID', code=400)
@@ -683,12 +853,12 @@ def manage_course_students(id):
 def remove_course_student(course_id, student_id):
     current_user = _get_current_user()
 
-    course = Course.query.get_or_404(course_id)
+    course = _db_get_or_404(Course, course_id)
 
     if not _can_manage_course(current_user, course):
         return api_response(msg='无权管理该课程的学生', code=403)
 
-    student = User.query.get(student_id)
+    student = _db_get(User, student_id)
     if student in course.students:
         course.students.remove(student)
         db.session.commit()
@@ -735,7 +905,7 @@ def search_students():
 def get_course_lesson_plans(id):
     current_user = _get_current_user()
 
-    course = Course.query.get_or_404(id)
+    course = _db_get_or_404(Course, id)
     permission_error = _check_course_access_or_403(course, current_user)
     if permission_error:
         return permission_error
@@ -772,7 +942,7 @@ def create_lesson_plan():
         return api_response(msg='Title is required', code=400)
 
     # 验证课程是否存在
-    course = Course.query.get(course_id)
+    course = _db_get(Course, course_id)
     if not course:
         return api_response(msg='Course not found', code=404)
 
@@ -809,8 +979,8 @@ def create_lesson_plan():
 @jwt_required()
 def get_lesson_plan(id):
     current_user = _get_current_user()
-    lp = LessonPlan.query.get_or_404(id)
-    course = Course.query.get_or_404(lp.course_id)
+    lp = _db_get_or_404(LessonPlan, id)
+    course = _db_get_or_404(Course, lp.course_id)
     permission_error = _check_course_access_or_403(course, current_user)
     if permission_error:
         return permission_error
@@ -826,6 +996,31 @@ def get_lesson_plan(id):
         'course_name': lp.course.name
     }
     return api_response(data=data)
+
+
+@teaching_bp.route('/lesson-plans/<int:id>', methods=['DELETE'])
+@teaching_bp.route('/chapters/<int:id>', methods=['DELETE'])
+@jwt_required()
+def delete_lesson_plan(id):
+    current_user = _get_current_user()
+    if current_user.get('role') not in ['admin', 'teacher']:
+        return api_response(msg='Permission denied', code=403)
+
+    chapter = _db_get_or_404(LessonPlan, id)
+    course = _db_get_or_404(Course, chapter.course_id)
+    if not _can_manage_course(current_user, course):
+        return api_response(msg='Permission denied: invalid chapter', code=403)
+
+    chapter_title = chapter.title
+    result = _delete_chapter_related_data(chapter)
+    db.session.commit()
+
+    log_action(
+        current_user.get('id'),
+        current_user.get('username'),
+        f"删除章节: 课程 {course.name} 章节 {chapter_title}，删除测验 {result['assessments']} 个，删除资源 {result['resources']} 个"
+    )
+    return api_response(msg='Chapter deleted', data={'id': id, **result})
 
 #
 # 4.3 BOPPPS Generation & Saving
@@ -856,11 +1051,19 @@ def format_boppps_json_to_markdown(stage, data):
             return str(outputs)
 
     md = ""
+    need_more_info = bool(data.get('need_more_info')) if isinstance(data, dict) else False
+    missing_info = data.get('missing_info', []) if isinstance(data, dict) else []
+
+    if need_more_info:
+        md += "### ⚠️ 生成信息不足\n\n"
+        md += "当前模型判断缺少必要上下文，暂未生成完整内容。\n\n"
+        if isinstance(missing_info, list) and missing_info:
+            md += "**缺失项**:\n" + "\n".join([f"- {str(x)}" for x in missing_info if str(x).strip()]) + "\n\n"
 
     def _extract_question_stem(item):
         if not isinstance(item, dict):
             return str(item or "").strip()
-        for key in ["stem", "question", "content", "title", "prompt"]:
+        for key in ["stem", "question", "statement", "content", "title", "prompt"]:
             value = item.get(key)
             if value is not None and str(value).strip():
                 return str(value).strip()
@@ -1067,6 +1270,7 @@ def format_boppps_json_to_markdown(stage, data):
                 if isinstance(e, dict):
                     err_text = (
                         e.get('error')
+                        or e.get('common_error')
                         or e.get('mistake')
                         or e.get('issue')
                         or e.get('problem')
@@ -1122,7 +1326,7 @@ def generate_custom_boppps(id):
     data = request.get_json()
     stage = data.get('stage')
 
-    lp = LessonPlan.query.get_or_404(id)
+    lp = _db_get_or_404(LessonPlan, id)
     course = lp.course
     selected_resource_ids = data.get('selected_resource_ids') if isinstance(data.get('selected_resource_ids'), list) else []
     combined_snippets, course_resources, chapter_resources = _build_knowledge_snippets(
@@ -1259,7 +1463,7 @@ def update_boppps_stage(id, stage):
 @jwt_required()
 def get_boppps_stages(id):
     current_user = _get_current_user()
-    chapter = LessonPlan.query.get_or_404(id)
+    chapter = _db_get_or_404(LessonPlan, id)
     _course, permission_error = _check_chapter_access_or_403(chapter, current_user)
     if permission_error:
         return permission_error
@@ -1279,7 +1483,7 @@ def get_boppps_stages(id):
 @jwt_required()
 def list_chapter_assessments(id):
     current_user = _get_current_user()
-    chapter = LessonPlan.query.get_or_404(id)
+    chapter = _db_get_or_404(LessonPlan, id)
     _course, permission_error = _check_chapter_access_or_403(chapter, current_user)
     if permission_error:
         return permission_error
@@ -1342,13 +1546,13 @@ def search_teachers():
 @jwt_required()
 def manage_course_teacher(id):
     current_user = _get_current_user()
-    course = Course.query.get_or_404(id)
+    course = _db_get_or_404(Course, id)
 
     if not _can_manage_course(current_user, course):
         return api_response(msg='无权分配该课程老师', code=403)
 
     if request.method == 'GET':
-        teacher = User.query.get(course.teacher_id) if course.teacher_id else None
+        teacher = _db_get(User, course.teacher_id) if course.teacher_id else None
         return api_response(data={
             'course_id': course.id,
             'teacher_id': teacher.id if teacher else None,
@@ -1358,7 +1562,7 @@ def manage_course_teacher(id):
 
     data = request.get_json(silent=True) or {}
     teacher_id = data.get('teacher_id')
-    teacher = User.query.get(teacher_id)
+    teacher = _db_get(User, teacher_id)
     if not teacher or teacher.role != 'teacher':
         return api_response(msg='无效的老师ID', code=400)
 
@@ -1382,8 +1586,8 @@ def create_assessment():
 
     data = request.get_json()
     lesson_plan_id = data.get('chapter_id') or data.get('lesson_plan_id')
-    chapter = LessonPlan.query.get_or_404(lesson_plan_id)
-    course = Course.query.get_or_404(chapter.course_id)
+    chapter = _db_get_or_404(LessonPlan, lesson_plan_id)
+    course = _db_get_or_404(Course, chapter.course_id)
     permission_error = _check_course_access_or_403(course, current_user)
     if permission_error:
         return permission_error
@@ -1478,9 +1682,9 @@ def update_assessment(id):
     if current_user.get('role') not in ['admin', 'teacher']:
         return api_response(msg='Permission denied', code=403)
 
-    assessment = Assessment.query.get_or_404(id)
-    chapter = LessonPlan.query.get_or_404(assessment.lesson_plan_id)
-    course = Course.query.get_or_404(chapter.course_id)
+    assessment = _db_get_or_404(Assessment, id)
+    chapter = _db_get_or_404(LessonPlan, assessment.lesson_plan_id)
+    course = _db_get_or_404(Course, chapter.course_id)
     permission_error = _check_course_access_or_403(course, current_user)
     if permission_error:
         return permission_error
@@ -1568,6 +1772,31 @@ def update_assessment(id):
     return api_response(msg='Assessment updated', data={'id': assessment.id, 'invalidated_submissions': invalidated_count})
 
 
+@teaching_bp.route('/assessments/<int:id>', methods=['DELETE'])
+@jwt_required()
+def delete_assessment(id):
+    current_user = _get_current_user()
+    if current_user.get('role') not in ['admin', 'teacher']:
+        return api_response(msg='Permission denied', code=403)
+
+    assessment = _db_get_or_404(Assessment, id)
+    chapter = _db_get_or_404(LessonPlan, assessment.lesson_plan_id)
+    course = _db_get_or_404(Course, chapter.course_id)
+    if not _can_manage_course(current_user, course):
+        return api_response(msg='Permission denied: invalid assessment', code=403)
+
+    assessment_title = assessment.title
+    _delete_assessment_related_data(assessment)
+    db.session.commit()
+
+    log_action(
+        current_user.get('id'),
+        current_user.get('username'),
+        f"删除测验: 课程 {course.name} 章节 {chapter.title} 标题 {assessment_title}"
+    )
+    return api_response(msg='Assessment deleted', data={'id': id})
+
+
 @teaching_bp.route('/assessments/<int:id>/push', methods=['PATCH'])
 @jwt_required()
 def push_assessment(id):
@@ -1575,9 +1804,9 @@ def push_assessment(id):
     if current_user.get('role') not in ['admin', 'teacher']:
         return api_response(msg='Permission denied', code=403)
 
-    assessment = Assessment.query.get_or_404(id)
-    chapter = LessonPlan.query.get_or_404(assessment.lesson_plan_id)
-    course = Course.query.get_or_404(chapter.course_id)
+    assessment = _db_get_or_404(Assessment, id)
+    chapter = _db_get_or_404(LessonPlan, assessment.lesson_plan_id)
+    course = _db_get_or_404(Course, chapter.course_id)
     permission_error = _check_course_access_or_403(course, current_user)
     if permission_error:
         return permission_error
@@ -1586,7 +1815,7 @@ def push_assessment(id):
         return api_response(msg='Assessment already pushed', data={'id': assessment.id, 'is_pushed': True})
 
     assessment.is_pushed = True
-    assessment.pushed_at = datetime.utcnow()
+    assessment.pushed_at = datetime.now(UTC)
     db.session.commit()
     log_action(
         current_user.get('id'),
@@ -1603,7 +1832,7 @@ def list_student_pending_assessments():
     if current_user.get('role') != 'student':
         return api_response(msg='Only students can view pending assessments', code=403)
     student_id = current_user.get('id')
-    user = User.query.get(student_id)
+    user = _db_get(User, student_id)
     enrolled_ids = [c.id for c in user.enrolled_courses] if user else []
     if not enrolled_ids:
         return api_response(data=[])
@@ -1627,8 +1856,8 @@ def list_student_pending_assessments():
         ).first()
         if submitted:
             continue
-        chapter = LessonPlan.query.get(ass.lesson_plan_id)
-        course = Course.query.get(chapter.course_id) if chapter else None
+        chapter = _db_get(LessonPlan, ass.lesson_plan_id)
+        course = _db_get(Course, chapter.course_id) if chapter else None
         pending.append({
             'assessment_id': ass.id,
             'title': ass.title,
@@ -1649,7 +1878,7 @@ def list_student_course_assessments(id):
     if current_user.get('role') != 'student':
         return api_response(msg='Only students can view this endpoint', code=403)
 
-    course = Course.query.get_or_404(id)
+    course = _db_get_or_404(Course, id)
     permission_error = _check_course_access_or_403(course, current_user)
     if permission_error:
         return permission_error
@@ -1665,7 +1894,7 @@ def list_student_course_assessments(id):
 
     data = []
     for assessment in assessments:
-        chapter = LessonPlan.query.get(assessment.lesson_plan_id)
+        chapter = _db_get(LessonPlan, assessment.lesson_plan_id)
         active_submission = Submission.query.filter_by(
             assessment_id=assessment.id,
             student_id=current_user.get('id'),
@@ -1694,8 +1923,8 @@ def list_student_course_assessments(id):
 @jwt_required()
 def get_assessment(id):
     current_user = _get_current_user()
-    assessment = Assessment.query.get_or_404(id)
-    chapter = LessonPlan.query.get_or_404(assessment.lesson_plan_id)
+    assessment = _db_get_or_404(Assessment, id)
+    chapter = _db_get_or_404(LessonPlan, assessment.lesson_plan_id)
     _course, permission_error = _check_chapter_access_or_403(chapter, current_user)
     if permission_error:
         return permission_error
@@ -1735,10 +1964,10 @@ def submit_assessment(id):
     if current_user.get('role') != 'student':
         return api_response(msg='Only students can submit assessments', code=403)
 
-    assessment = Assessment.query.get_or_404(id)
+    assessment = _db_get_or_404(Assessment, id)
     if not assessment.is_pushed:
         return api_response(msg='Assessment is not pushed to students yet', code=400)
-    chapter = LessonPlan.query.get_or_404(assessment.lesson_plan_id)
+    chapter = _db_get_or_404(LessonPlan, assessment.lesson_plan_id)
     _course, permission_error = _check_chapter_access_or_403(chapter, current_user)
     if permission_error:
         return permission_error
@@ -1791,8 +2020,8 @@ def get_my_assessment_result(id):
     if current_user.get('role') != 'student':
         return api_response(msg='Only students can view own result', code=403)
 
-    assessment = Assessment.query.get_or_404(id)
-    chapter = LessonPlan.query.get_or_404(assessment.lesson_plan_id)
+    assessment = _db_get_or_404(Assessment, id)
+    chapter = _db_get_or_404(LessonPlan, assessment.lesson_plan_id)
     _course, permission_error = _check_chapter_access_or_403(chapter, current_user)
     if permission_error:
         return permission_error
@@ -1844,8 +2073,8 @@ def list_assessment_submissions(id):
     if current_user.get('role') not in ['admin', 'teacher']:
         return api_response(msg='Permission denied', code=403)
 
-    assessment = Assessment.query.get_or_404(id)
-    chapter = LessonPlan.query.get_or_404(assessment.lesson_plan_id)
+    assessment = _db_get_or_404(Assessment, id)
+    chapter = _db_get_or_404(LessonPlan, assessment.lesson_plan_id)
     _course, permission_error = _check_chapter_access_or_403(chapter, current_user)
     if permission_error:
         return permission_error
@@ -1853,7 +2082,7 @@ def list_assessment_submissions(id):
     submissions = Submission.query.filter_by(assessment_id=id).order_by(Submission.submitted_at.desc()).all()
     data = []
     for sub in submissions:
-        student = User.query.get(sub.student_id)
+        student = _db_get(User, sub.student_id)
         data.append({
             'id': sub.id,
             'student_id': sub.student_id,
@@ -1876,9 +2105,9 @@ def update_submission_status(id):
     if current_user.get('role') not in ['admin', 'teacher']:
         return api_response(msg='Permission denied', code=403)
 
-    submission = Submission.query.get_or_404(id)
-    assessment = Assessment.query.get_or_404(submission.assessment_id)
-    chapter = LessonPlan.query.get_or_404(assessment.lesson_plan_id)
+    submission = _db_get_or_404(Submission, id)
+    assessment = _db_get_or_404(Assessment, submission.assessment_id)
+    chapter = _db_get_or_404(LessonPlan, assessment.lesson_plan_id)
     _course, permission_error = _check_chapter_access_or_403(chapter, current_user)
     if permission_error:
         return permission_error
@@ -1914,7 +2143,7 @@ def list_question_bank():
         teacher_course_ids = [c.id for c in Course.query.filter_by(teacher_id=user_id).all()]
         query = query.filter(QuestionBankItem.course_id.in_(teacher_course_ids) if teacher_course_ids else false())
     elif role == 'student':
-        user = User.query.get(user_id)
+        user = _db_get(User, user_id)
         enrolled_ids = [c.id for c in user.enrolled_courses] if user else []
         query = query.filter(QuestionBankItem.course_id.in_(enrolled_ids) if enrolled_ids else false())
 
@@ -1955,12 +2184,12 @@ def create_question_bank_item():
     if not course_id or not stem or len(options) < 2 or answer not in options:
         return api_response(msg='Invalid question payload', code=400)
 
-    course = Course.query.get_or_404(course_id)
+    course = _db_get_or_404(Course, course_id)
     if current_user.get('role') == 'teacher' and course.teacher_id != current_user.get('id'):
         return api_response(msg='Permission denied: invalid course', code=403)
 
     if chapter_id:
-        chapter = LessonPlan.query.get_or_404(chapter_id)
+        chapter = _db_get_or_404(LessonPlan, chapter_id)
         if chapter.course_id != course.id:
             return api_response(msg='Chapter does not belong to course', code=400)
 
@@ -1988,8 +2217,8 @@ def update_question_bank_item(id):
     if current_user.get('role') not in ['admin', 'teacher']:
         return api_response(msg='Permission denied', code=403)
 
-    item = QuestionBankItem.query.get_or_404(id)
-    course = Course.query.get_or_404(item.course_id)
+    item = _db_get_or_404(QuestionBankItem, id)
+    course = _db_get_or_404(Course, item.course_id)
     if current_user.get('role') == 'teacher' and course.teacher_id != current_user.get('id'):
         return api_response(msg='Permission denied: invalid question', code=403)
 
@@ -2024,8 +2253,8 @@ def delete_question_bank_item(id):
     if current_user.get('role') not in ['admin', 'teacher']:
         return api_response(msg='Permission denied', code=403)
 
-    item = QuestionBankItem.query.get_or_404(id)
-    course = Course.query.get_or_404(item.course_id)
+    item = _db_get_or_404(QuestionBankItem, id)
+    course = _db_get_or_404(Course, item.course_id)
     if current_user.get('role') == 'teacher' and course.teacher_id != current_user.get('id'):
         return api_response(msg='Permission denied: invalid question', code=403)
 
@@ -2053,12 +2282,12 @@ def generate_question_bank_items():
     count = max(1, min(20, count))
     difficulty = max(1, min(5, difficulty))
 
-    course = Course.query.get_or_404(course_id)
+    course = _db_get_or_404(Course, course_id)
     if current_user.get('role') == 'teacher' and course.teacher_id != current_user.get('id'):
         return api_response(msg='Permission denied: invalid course', code=403)
     chapter = None
     if chapter_id:
-        chapter = LessonPlan.query.get_or_404(chapter_id)
+        chapter = _db_get_or_404(LessonPlan, chapter_id)
         if chapter.course_id != course.id:
             return api_response(msg='Chapter does not belong to course', code=400)
 
@@ -2151,9 +2380,9 @@ def import_questions_to_assessment(id):
     if current_user.get('role') not in ['admin', 'teacher']:
         return api_response(msg='Permission denied', code=403)
 
-    assessment = Assessment.query.get_or_404(id)
-    chapter = LessonPlan.query.get_or_404(assessment.lesson_plan_id)
-    course = Course.query.get_or_404(chapter.course_id)
+    assessment = _db_get_or_404(Assessment, id)
+    chapter = _db_get_or_404(LessonPlan, assessment.lesson_plan_id)
+    course = _db_get_or_404(Course, chapter.course_id)
     if current_user.get('role') == 'teacher' and course.teacher_id != current_user.get('id'):
         return api_response(msg='Permission denied: invalid assessment', code=403)
 
@@ -2193,7 +2422,7 @@ def import_questions_to_assessment(id):
 @jwt_required()
 def get_analytics(id):
     current_user = _get_current_user()
-    chapter = LessonPlan.query.get_or_404(id)
+    chapter = _db_get_or_404(LessonPlan, id)
     _course, permission_error = _check_chapter_access_or_403(chapter, current_user)
     if permission_error:
         return permission_error
@@ -2225,8 +2454,8 @@ def get_assessment_detail_analytics(id):
     if current_user.get('role') not in ['admin', 'teacher']:
         return api_response(msg='Permission denied', code=403)
 
-    assessment = Assessment.query.get_or_404(id)
-    chapter = LessonPlan.query.get_or_404(assessment.lesson_plan_id)
+    assessment = _db_get_or_404(Assessment, id)
+    chapter = _db_get_or_404(LessonPlan, assessment.lesson_plan_id)
     _course, permission_error = _check_chapter_access_or_403(chapter, current_user)
     if permission_error:
         return permission_error
@@ -2241,8 +2470,8 @@ def get_assessment_ai_analytics(id):
     if current_user.get('role') not in ['admin', 'teacher']:
         return api_response(msg='Permission denied', code=403)
 
-    assessment = Assessment.query.get_or_404(id)
-    chapter = LessonPlan.query.get_or_404(assessment.lesson_plan_id)
+    assessment = _db_get_or_404(Assessment, id)
+    chapter = _db_get_or_404(LessonPlan, assessment.lesson_plan_id)
     _course, permission_error = _check_chapter_access_or_403(chapter, current_user)
     if permission_error:
         return permission_error
@@ -2418,7 +2647,7 @@ def get_resources():
     if role == 'teacher':
         query = query.filter(Resource.uploader_id == user_id)
     elif role == 'student':
-        user = User.query.get(user_id)
+        user = _db_get(User, user_id)
         enrolled_ids = [c.id for c in user.enrolled_courses] if user else []
         query = query.filter(Resource.course_id.in_(enrolled_ids) if enrolled_ids else false())
 
@@ -2435,14 +2664,14 @@ def get_resources():
 @jwt_required()
 def get_course_resources(course_id):
     current_user = _get_current_user()
-    course = Course.query.get_or_404(course_id)
+    course = _db_get_or_404(Course, course_id)
     role = current_user.get('role')
     user_id = current_user.get('id')
 
     if role == 'teacher' and course.teacher_id != user_id:
         return api_response(msg='Permission denied: invalid course', code=403)
     if role == 'student':
-        user = User.query.get(user_id)
+        user = _db_get(User, user_id)
         enrolled_ids = [c.id for c in user.enrolled_courses] if user else []
         if course.id not in enrolled_ids:
             return api_response(msg='Permission denied: invalid course', code=403)
@@ -2462,15 +2691,15 @@ def get_course_resources(course_id):
 @jwt_required()
 def get_chapter_resources(chapter_id):
     current_user = _get_current_user()
-    chapter = LessonPlan.query.get_or_404(chapter_id)
-    course = Course.query.get_or_404(chapter.course_id)
+    chapter = _db_get_or_404(LessonPlan, chapter_id)
+    course = _db_get_or_404(Course, chapter.course_id)
     role = current_user.get('role')
     user_id = current_user.get('id')
 
     if role == 'teacher' and course.teacher_id != user_id:
         return api_response(msg='Permission denied: invalid chapter', code=403)
     if role == 'student':
-        user = User.query.get(user_id)
+        user = _db_get(User, user_id)
         enrolled_ids = [c.id for c in user.enrolled_courses] if user else []
         if course.id not in enrolled_ids:
             return api_response(msg='Permission denied: invalid chapter', code=403)
@@ -2489,8 +2718,8 @@ def set_chapter_resources(chapter_id):
     if current_user.get('role') not in ['admin', 'teacher']:
         return api_response(msg='Permission denied', code=403)
 
-    chapter = LessonPlan.query.get_or_404(chapter_id)
-    course = Course.query.get_or_404(chapter.course_id)
+    chapter = _db_get_or_404(LessonPlan, chapter_id)
+    course = _db_get_or_404(Course, chapter.course_id)
     if current_user.get('role') == 'teacher' and course.teacher_id != current_user.get('id'):
         return api_response(msg='Permission denied: invalid chapter', code=403)
 
@@ -2571,11 +2800,39 @@ def create_resource():
     return api_response(msg='Resource created', data=_resource_payload(resource), code=201)
 
 
+@teaching_bp.route('/resources/<int:id>/content', methods=['GET'])
+def get_resource_content(id):
+    resource = _db_get_or_404(Resource, id)
+
+    if resource.type != 'file':
+        return api_response(msg='Only file resources support content access', code=400)
+
+    file_meta = _infer_resource_file_meta(resource)
+    file_path = file_meta.get('file_path')
+    if not file_path:
+        return api_response(msg='Resource file not found', code=404)
+
+    download = request.args.get('download', default=0, type=int) == 1
+    download_name = file_meta.get('download_name') or 'resource'
+    response = send_file(
+        file_path,
+        mimetype=file_meta.get('mime_type') or 'application/octet-stream',
+        as_attachment=download,
+        download_name=download_name,
+        conditional=True,
+        etag=True,
+        max_age=0,
+    )
+    disposition = 'attachment' if download else 'inline'
+    response.headers['Content-Disposition'] = f"{disposition}; filename*=UTF-8''{quote(download_name)}"
+    return response
+
+
 @teaching_bp.route('/resources/<int:id>', methods=['DELETE'])
 @jwt_required()
 def delete_resource(id):
     current_user = _get_current_user()
-    resource = Resource.query.get_or_404(id)
+    resource = _db_get_or_404(Resource, id)
 
     if current_user.get('role') == 'teacher':
         is_owner = resource.uploader_id == current_user.get('id')

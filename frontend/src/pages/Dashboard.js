@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { BookOpen } from 'lucide-react';
-
-const API_BASE = '/api';
+import { API_BASE } from '../api';
 
 const Dashboard = ({ user }) => {
   const [courses, setCourses] = useState([]);
@@ -24,7 +23,8 @@ const Dashboard = ({ user }) => {
 
   return (
     <div className="space-y-6">
-      <div className="bg-gradient-to-r from-indigo-500 to-purple-600 rounded-2xl p-10 text-white shadow-lg">
+      <div className="bg-gradient-to-r from-indigo-500 to-purple-600 rounded-2xl p-10 text-white shadow-lg motion-panel relative overflow-hidden">
+        <div className="absolute -right-8 -top-10 h-40 w-40 rounded-full bg-white/15 motion-float" />
         <h2 className="text-3xl font-bold mb-4">欢迎回来，{user?.name} 👋</h2>
         <p className="opacity-90 max-w-2xl text-lg">
           您现在位于 BOPPPS 辅助教学系统的控制台。
@@ -36,15 +36,15 @@ const Dashboard = ({ user }) => {
           {role === 'student' ? '我的课程' : '我教授的课程'}
         </h3>
         {courses.length === 0 ? (
-          <div className="bg-white p-8 rounded-xl border border-gray-100 shadow-sm text-center text-gray-500">
+          <div className="bg-white p-8 rounded-xl border border-gray-100 shadow-sm text-center text-gray-500 motion-panel">
             暂无课程，请前往课程管理{role === 'student' ? '加入' : '创建'}。
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 stagger-group">
             {courses.map((course) => (
-              <div key={course.id} className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+              <div key={course.id} className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow motion-card">
                 <div className="flex justify-between items-start mb-4">
-                  <div className="p-3 bg-indigo-50 text-indigo-600 rounded-lg">
+                  <div className="p-3 bg-indigo-50 text-indigo-600 rounded-lg motion-card-icon">
                     <BookOpen size={24} />
                   </div>
                 </div>

@@ -1,4 +1,7 @@
-from flask import Flask
+import os
+from pathlib import Path
+
+from flask import Flask, abort, send_from_directory
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from werkzeug.security import generate_password_hash
 
@@ -8,6 +11,51 @@ from models import User
 from routes.admin import admin_bp
 from routes.auth import auth_bp
 from routes.teaching import teaching_bp
+
+
+def _register_frontend_spa(app):
+    """Serve the React production build when present (Docker / packaged deploy)."""
+    build_dir = Path(app.config['BASE_DIR']).joinpath('frontend', 'build')
+    index_html = build_dir.joinpath('index.html')
+    if not index_html.is_file():
+        return
+
+    root_files = {
+        'asset-manifest.json',
+        'favicon.ico',
+        'logo192.png',
+        'logo512.png',
+        'manifest.json',
+        'robots.txt',
+    }
+
+    def _under_build(candidate: Path):
+        resolved = candidate.resolve()
+        root = build_dir.resolve()
+        return resolved == root or root in resolved.parents
+
+    @app.route('/')
+    def _spa_root():
+        return send_from_directory(build_dir, 'index.html')
+
+    @app.get('/<path:path>')
+    def _spa_deep_link(path: str):
+        if path == 'api' or path.startswith('api/'):
+            abort(404)
+        try:
+            if path in root_files:
+                fp = build_dir.joinpath(Path(path))
+                if fp.is_file() and _under_build(fp):
+                    return send_from_directory(build_dir, fp.name)
+
+            nested = build_dir.joinpath(Path(path)).resolve()
+            if nested.is_file() and _under_build(nested):
+                rel = nested.relative_to(build_dir.resolve())
+                return send_from_directory(build_dir, str(rel).replace(os.sep, '/'))
+
+            return send_from_directory(build_dir, 'index.html')
+        except ValueError:
+            return send_from_directory(build_dir, 'index.html')
 
 
 def create_app(test_config=None):
@@ -64,6 +112,8 @@ def create_app(test_config=None):
     @app.teardown_appcontext
     def cleanup_session(_error=None):
         db.session.remove()
+
+    _register_frontend_spa(app)
 
     return app
 

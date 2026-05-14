@@ -1,44 +1,38 @@
 services:
-  mysql:
+  db:
     image: mysql:8.0
-    container_name: graduation-mysql
-    restart: unless-stopped
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootroot}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-koppps}
-      MYSQL_USER: ${MYSQL_USER:-koppps}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-rootroot}
+      MYSQL_DATABASE: koppps
+      MYSQL_USER: koppps
+      MYSQL_PASSWORD: rootroot
+      MYSQL_ROOT_PASSWORD: rootroot
+    ports:
+      # Host 3307 avoids clashing with a MySQL already on 3306
+      - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
-    command: --default-authentication-plugin=mysql_native_password
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-prootroot"]
+      interval: 5s
+      timeout: 5s
+      retries: 45
+      start_period: 90s
 
-  backend:
-    build:
-      context: .
-      dockerfile: Dockerfile.backend
-    container_name: graduation-backend
-    restart: unless-stopped
+  app:
+    build: .
+    image: graduation-app:latest
     depends_on:
-      - mysql
-    environment:
-      SQLALCHEMY_DATABASE_URI: ${SQLALCHEMY_DATABASE_URI:-mysql+pymysql://koppps:rootroot@mysql:3306/koppps?charset=utf8mb4}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-this-in-production}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:30b}
-    volumes:
-      - ./static/uploads:/app/static/uploads
-    expose:
-      - "5000"
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: graduation-frontend
-    restart: unless-stopped
-    depends_on:
-      - backend
+      db:
+        condition: service_healthy
     ports:
-      - "8080:80"
+      - "5000:5000"
+    volumes:
+      - ./static/uploads/resources:/app/static/uploads/resources
+    restart: unless-stopped
+    environment:
+      SQLALCHEMY_DATABASE_URI: mysql+pymysql://koppps:rootroot@db:3306/koppps?charset=utf8mb4
 
 volumes:
   mysql_data:

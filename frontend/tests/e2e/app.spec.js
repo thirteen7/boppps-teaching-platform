@@ -43,16 +43,16 @@ async function waitForMainReady(page) {
 }
 
 async function openCoursesTab(page) {
-  const sidebarButtons = page.locator('aside nav button');
-  await expect(sidebarButtons.nth(1)).toBeVisible({ timeout: 10000 });
-  await sidebarButtons.nth(1).click();
+  const coursesButton = page.getByRole('button', { name: '课程管理' });
+  await expect(coursesButton).toBeVisible({ timeout: 10000 });
+  await coursesButton.click();
   return waitForMainReady(page);
 }
 
 async function openUsersTab(page) {
-  const sidebarButtons = page.locator('aside nav button');
-  await expect(sidebarButtons.nth(0)).toBeVisible({ timeout: 10000 });
-  await sidebarButtons.nth(0).click();
+  const usersButton = page.getByRole('button', { name: '用户管理' });
+  await expect(usersButton).toBeVisible({ timeout: 10000 });
+  await usersButton.click();
   return waitForMainReady(page);
 }
 
@@ -73,7 +73,7 @@ async function apiCreateCourse(request, teacherUsername, data) {
   if (!response.ok()) {
     throw new Error(payload?.msg || 'Create course failed');
   }
-  return payload.data.id;
+  return payload.data;
 }
 
 async function apiDeleteCourse(request, teacherUsername, courseId) {
@@ -151,13 +151,13 @@ async function deleteResourceByName(page, request, resourceName) {
 function courseCard(page, courseName) {
   return page
     .getByRole('heading', { name: courseName })
-    .locator('xpath=ancestor::div[contains(@class,"shadow-sm")][1]');
+    .locator('xpath=ancestor::div[.//button[contains(., "管理章节") or contains(., "进入练习")]][1]');
 }
 
 function planCard(page, planTitle) {
   return page
     .getByRole('heading', { name: planTitle })
-    .locator('xpath=ancestor::div[contains(@class,"group")][1]');
+    .locator('xpath=ancestor::div[.//button[contains(., "编辑章节")]][1]');
 }
 
 function resourceCard(page, resourceName) {
@@ -183,8 +183,7 @@ test('admin can view system logs table content', async ({ page, request }) => {
 
   try {
     await openAs(page, request, 'admin');
-    const sidebarButtons = page.locator('aside nav button');
-    await sidebarButtons.nth(3).click();
+    await page.getByRole('button', { name: '系统日志' }).click();
 
     const mainArea = await waitForMainReady(page);
     const table = mainArea.locator('table');
@@ -214,7 +213,7 @@ test('admin can delete a user from user management', async ({ page, request }) =
     await expect(row).toBeVisible({ timeout: 10000 });
 
     const stopAccepting = acceptAllDialogs(page);
-    await row.getByRole('button').click();
+    await row.getByRole('button', { name: '删除' }).click();
     stopAccepting();
 
     await expect(page.getByText(uniqueUsername)).toHaveCount(0, { timeout: 10000 });
@@ -232,11 +231,8 @@ test('teacher can create and delete a course', async ({ page, request }) => {
 
   const modal = page.locator('.fixed.inset-0').last();
   const courseName = `auto-course-${Date.now()}`;
-  const courseCode = `AUTO-${Date.now()}`;
-
   try {
     await modal.getByRole('textbox').nth(0).fill(courseName);
-    await modal.getByRole('textbox').nth(1).fill(courseCode);
     await modal.locator('textarea').fill('Created by Playwright test');
     await modal.getByRole('button').nth(1).click();
 
@@ -255,7 +251,7 @@ test('teacher can create and delete a course', async ({ page, request }) => {
 test('teacher can remove a student from a course', async ({ page, request }) => {
   const courseName = `remove-course-${Date.now()}`;
   const studentUsername = `remove-student-${Date.now()}`;
-  const courseId = await apiCreateCourse(request, 'teacher', {
+  const course = await apiCreateCourse(request, 'teacher', {
     name: courseName,
     code: `REMOVE-${Date.now()}`,
     objectives: 'Remove student flow test',
@@ -269,7 +265,7 @@ test('teacher can remove a student from a course', async ({ page, request }) => 
 
   try {
     const teacher = await apiLogin(request, 'teacher');
-    await request.post(`${API_BASE}/teaching/courses/${courseId}/students`, {
+    await request.post(`${API_BASE}/teaching/courses/${course.id}/students`, {
       headers: { Authorization: `Bearer ${teacher.token}` },
       data: { student_id: studentId },
     });
@@ -289,14 +285,14 @@ test('teacher can remove a student from a course', async ({ page, request }) => 
 
     await expect(page.getByText(studentUsername)).toHaveCount(0, { timeout: 10000 });
   } finally {
-    await apiDeleteCourse(request, 'teacher', courseId);
+    await apiDeleteCourse(request, 'teacher', course.id);
     await apiDeleteUser(request, studentId);
   }
 });
 
 test('student can join a course', async ({ page, request }) => {
   const courseName = `join-course-${Date.now()}`;
-  const courseId = await apiCreateCourse(request, 'teacher', {
+  const course = await apiCreateCourse(request, 'teacher', {
     name: courseName,
     code: `JOIN-${Date.now()}`,
     objectives: 'Join flow test',
@@ -310,18 +306,18 @@ test('student can join a course', async ({ page, request }) => {
 
     const modal = page.locator('.fixed.inset-0').last();
     page.on('dialog', (dialog) => dialog.accept());
-    await modal.getByRole('textbox').nth(0).fill(String(courseId));
+    await modal.getByRole('textbox').nth(0).fill(String(course.code));
     await modal.getByRole('button').nth(1).click();
 
     await expect(page.getByRole('heading', { name: courseName })).toBeVisible({ timeout: 10000 });
   } finally {
-    await apiDeleteCourse(request, 'teacher', courseId);
+    await apiDeleteCourse(request, 'teacher', course.id);
   }
 });
 
 test('teacher can create lesson plan', async ({ page, request }) => {
   const courseName = `plan-course-${Date.now()}`;
-  const courseId = await apiCreateCourse(request, 'teacher', {
+  const course = await apiCreateCourse(request, 'teacher', {
     name: courseName,
     code: `PLAN-${Date.now()}`,
     objectives: 'Plan flow test',
@@ -346,19 +342,19 @@ test('teacher can create lesson plan', async ({ page, request }) => {
 
     await expect(planCard(page, planTitle)).toBeVisible({ timeout: 10000 });
   } finally {
-    await apiDeleteCourse(request, 'teacher', courseId);
+    await apiDeleteCourse(request, 'teacher', course.id);
   }
 });
 
 test('teacher can edit and save a BOPPPS stage', async ({ page, request }) => {
   const courseName = `stage-course-${Date.now()}`;
-  const courseId = await apiCreateCourse(request, 'teacher', {
+  const course = await apiCreateCourse(request, 'teacher', {
     name: courseName,
     code: `STAGE-${Date.now()}`,
     objectives: 'Stage save test',
   });
   const planTitle = `stage-plan-${Date.now()}`;
-  await apiCreateLessonPlan(request, 'teacher', courseId, planTitle);
+  await apiCreateLessonPlan(request, 'teacher', course.id, planTitle);
 
   try {
     await openAs(page, request, 'teacher');
@@ -384,7 +380,7 @@ test('teacher can edit and save a BOPPPS stage', async ({ page, request }) => {
     await planCard(page, planTitle).getByRole('button').first().click();
     await expect(page.locator('textarea').last()).toHaveValue(content, { timeout: 10000 });
   } finally {
-    await apiDeleteCourse(request, 'teacher', courseId);
+    await apiDeleteCourse(request, 'teacher', course.id);
   }
 });
 
@@ -393,13 +389,13 @@ test('quiz flow: teacher creates quiz, student submits, teacher rejects, student
   const courseName = `quiz-course-${stamp}`;
   const planTitle = `quiz-plan-${stamp}`;
   const quizTitle = `quiz-${stamp}`;
-  const courseId = await apiCreateCourse(request, 'teacher', {
+  const course = await apiCreateCourse(request, 'teacher', {
     name: courseName,
     code: `QUIZ-${stamp}`,
     objectives: 'Quiz e2e flow',
   });
-  await apiCreateLessonPlan(request, 'teacher', courseId, planTitle);
-  await apiJoinCourse(request, 'student', courseId);
+  await apiCreateLessonPlan(request, 'teacher', course.id, planTitle);
+  await apiJoinCourse(request, 'student', course.id);
 
   const stopAccepting = acceptAllDialogs(page);
   try {
@@ -412,17 +408,18 @@ test('quiz flow: teacher creates quiz, student submits, teacher rejects, student
     const modal = page.locator('.fixed.inset-0').last();
     await modal.getByRole('textbox').first().fill(quizTitle);
     await modal.getByRole('checkbox').check();
+    await modal.getByRole('button', { name: '新增题目' }).click();
     await modal.getByPlaceholder('请输入题干').fill('2+2=?');
     await modal.getByPlaceholder('选项 1').fill('3');
     await modal.getByPlaceholder('选项 2').fill('4');
-    await modal.getByPlaceholder('标准答案（需与某个选项一致）').fill('4');
+    await modal.locator('select').filter({ hasText: '请选择标准答案' }).selectOption('4');
     await modal.getByRole('button', { name: '创建测验' }).click();
     await expect(page.getByText(quizTitle)).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: '推送给学生' }).click();
 
     await openAs(page, request, 'student');
     await openCoursesTab(page);
     await courseCard(page, courseName).getByRole('button', { name: '进入练习' }).click();
-    await page.getByRole('button', { name: '查看练习' }).first().click();
     await page.locator('div').filter({ hasText: quizTitle }).getByRole('button', { name: '开始作答' }).click();
     await page.locator('label').filter({ hasText: '4' }).first().click();
     await page.getByRole('button', { name: '提交测验' }).click();
@@ -441,7 +438,6 @@ test('quiz flow: teacher creates quiz, student submits, teacher rejects, student
     await openAs(page, request, 'student');
     await openCoursesTab(page);
     await courseCard(page, courseName).getByRole('button', { name: '进入练习' }).click();
-    await page.getByRole('button', { name: '查看练习' }).first().click();
     await page.locator('div').filter({ hasText: quizTitle }).getByRole('button', { name: '开始作答' }).click();
     await page.locator('label').filter({ hasText: '4' }).first().click();
     await page.getByRole('button', { name: '提交测验' }).click();
@@ -450,17 +446,22 @@ test('quiz flow: teacher creates quiz, student submits, teacher rejects, student
     await openCoursesTab(page);
     await courseCard(page, courseName).getByRole('button', { name: '管理章节' }).click();
     await page.getByRole('button', { name: '编辑章节' }).first().click();
-    await expect(page.getByText('提交人数: 1')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('提交人数: 1').first()).toBeVisible({ timeout: 10000 });
   } finally {
     stopAccepting();
-    await apiDeleteCourse(request, 'teacher', courseId);
+    await apiDeleteCourse(request, 'teacher', course.id);
   }
 });
 
 test('teacher can create and delete a link resource', async ({ page, request }) => {
+  const courseName = `resource-course-${Date.now()}`;
+  const course = await apiCreateCourse(request, 'teacher', {
+    name: courseName,
+    code: `RES-${Date.now()}`,
+    objectives: 'Resource flow test',
+  });
   await openAs(page, request, 'teacher');
-  const sidebarButtons = page.locator('aside nav button');
-  await sidebarButtons.nth(2).click();
+  await page.getByRole('button', { name: '资源上传' }).click();
 
   const resourceName = `auto-resource-${Date.now()}`;
   const mainArea = await waitForMainReady(page);
@@ -468,6 +469,7 @@ test('teacher can create and delete a link resource', async ({ page, request }) 
 
   try {
     await form.getByRole('textbox').nth(0).fill(resourceName);
+    await form.locator('select').first().selectOption(String(course.id));
     await form.locator('button[type="button"]').nth(1).click();
     await form.locator('input[type="url"]').fill('https://example.com/teaching-resource');
     await form.locator('button[type="submit"]').click();
@@ -480,13 +482,19 @@ test('teacher can create and delete a link resource', async ({ page, request }) 
     await expect(page.getByText(resourceName)).toHaveCount(0, { timeout: 10000 });
   } finally {
     await deleteResourceByName(page, request, resourceName);
+    await apiDeleteCourse(request, 'teacher', course.id);
   }
 });
 
 test('teacher can upload a file resource', async ({ page, request }) => {
+  const courseName = `file-course-${Date.now()}`;
+  const course = await apiCreateCourse(request, 'teacher', {
+    name: courseName,
+    code: `FILE-${Date.now()}`,
+    objectives: 'File resource flow test',
+  });
   await openAs(page, request, 'teacher');
-  const sidebarButtons = page.locator('aside nav button');
-  await sidebarButtons.nth(2).click();
+  await page.getByRole('button', { name: '资源上传' }).click();
 
   const resourceName = `file-resource-${Date.now()}`;
   const mainArea = await waitForMainReady(page);
@@ -495,12 +503,14 @@ test('teacher can upload a file resource', async ({ page, request }) => {
 
   try {
     await form.getByRole('textbox').nth(0).fill(resourceName);
+    await form.locator('select').first().selectOption(String(course.id));
     await form.locator('input[type="file"]').setInputFiles(fixturePath);
     await form.locator('button[type="submit"]').click();
 
     await expect(resourceCard(page, resourceName)).toBeVisible({ timeout: 10000 });
   } finally {
     await deleteResourceByName(page, request, resourceName);
+    await apiDeleteCourse(request, 'teacher', course.id);
   }
 });
 

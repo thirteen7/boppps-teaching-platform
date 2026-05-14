@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { ArrowLeft, Edit3, Trash2 } from 'lucide-react';
-
-const API_BASE = '/api';
+import { API_BASE } from '../api';
 const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` });
 
 const createEmptyForm = () => ({
@@ -342,8 +341,8 @@ const QuestionBankManagement = () => {
       )}
 
       {editing && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl w-full max-w-3xl p-4 space-y-3">
+        <div className="fixed inset-0 bg-black/50 motion-overlay z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl w-full max-w-3xl p-4 space-y-3 motion-modal">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-bold">{creating ? '手动录入题目' : '编辑题目'}</h3>
               <button type="button" onClick={() => { setEditing(false); setCreating(false); setForm(createEmptyForm()); }} className="text-gray-500 text-sm inline-flex items-center gap-1">

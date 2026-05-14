@@ -2,9 +2,9 @@
 import React, { lazy, Suspense, useEffect, useState } from 'react';
 import axios from 'axios';
 import { Plus, BookOpen, ArrowLeft, FileEdit, Save, Wand2, Trash2, Users, Search, Link as LinkIcon, BarChart3, Bot, Trophy } from 'lucide-react';
+import { API_BASE, API_ORIGIN } from '../api';
 
-const API_BASE = '/api';
-const API_HOST = '';
+const API_HOST = API_ORIGIN;
 
 const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` });
 
@@ -43,12 +43,50 @@ const optionLabel = (idx) => String.fromCharCode(65 + idx);
 const AssessmentAnalyticsCharts = lazy(() => import('../components/AssessmentAnalyticsCharts'));
 
 const filenameWithoutExt = (filename = '') => filename.replace(/\.[^/.]+$/, '') || filename;
+const getResourceExt = (resource) => {
+  const explicitExt = (resource?.file_ext || '').toLowerCase();
+  if (explicitExt) {
+    return explicitExt.startsWith('.') ? explicitExt.slice(1) : explicitExt;
+  }
+  const ref = (resource?.url || resource?.name || '').split('?')[0].toLowerCase();
+  const seg = ref.split('.');
+  return seg.length > 1 ? seg[seg.length - 1] : '';
+};
+const getResourceMimeType = (resource) => (resource?.mime_type || '').toLowerCase();
 
 const getResourceHref = (url) => {
   if (!url) return '#';
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
   if (url.startsWith('/')) return `${API_HOST}${url}`;
   return url;
+};
+const getResourceContentHref = (resource, preferred = 'download') => {
+  if (!resource) return '#';
+  if (resource.type === 'link') return getResourceHref(resource.url);
+  const apiUrl = preferred === 'preview'
+    ? resource.preview_url || resource.download_url
+    : resource.download_url || resource.preview_url;
+  return apiUrl ? `${API_HOST}${apiUrl}` : getResourceHref(resource.url);
+};
+const openResourceInPlace = (href) => {
+  if (!href || href === '#') return;
+  window.location.assign(href);
+};
+const triggerDownload = async (resource, href) => {
+  if (!href || href === '#') return;
+  const response = await fetch(href);
+  if (!response.ok) {
+    throw new Error(`Download failed: ${response.status}`);
+  }
+  const blob = await response.blob();
+  const objectUrl = window.URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = resource?.download_name || resource?.name || 'resource';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.URL.revokeObjectURL(objectUrl);
 };
 
 const escapeHtml = (text = '') => String(text)
@@ -129,25 +167,29 @@ const markdownToHtml = (markdown = '') => {
   return parts.join('');
 };
 
-const getFileExt = (resource) => {
-  const ref = (resource?.url || resource?.name || '').split('?')[0].toLowerCase();
-  const seg = ref.split('.');
-  return seg.length > 1 ? seg[seg.length - 1] : '';
-};
-
 const canInlinePreview = (ext) => ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'txt', 'md', 'csv', 'json'].includes(ext);
 
 const isOfficeDoc = (ext) => ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes(ext);
+const canPreviewResource = (resource) => {
+  if (!resource) return false;
+  if (resource.type === 'link') return false;
+  const ext = getResourceExt(resource);
+  const mimeType = getResourceMimeType(resource);
+  const localPreviewable = canInlinePreview(ext) || isOfficeDoc(ext) || mimeType === 'application/json';
+  if (typeof resource.can_preview === 'boolean') return resource.can_preview || localPreviewable;
+  return localPreviewable;
+};
 
 const ResourcePreviewModal = ({ resource, onClose }) => {
   const [textContent, setTextContent] = useState('');
   const [textLoading, setTextLoading] = useState(false);
   const safeResource = resource || {};
-  const ext = getFileExt(safeResource);
-  const href = getResourceHref(safeResource.url);
-  const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'].includes(ext);
-  const isPdf = ext === 'pdf';
-  const isText = ['txt', 'md', 'csv', 'json'].includes(ext);
+  const ext = getResourceExt(safeResource);
+  const href = safeResource.type === 'link' ? getResourceHref(safeResource.url) : `${API_HOST}${safeResource.preview_url || safeResource.download_url || safeResource.url}`;
+  const mimeType = getResourceMimeType(safeResource);
+  const isImage = mimeType.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'].includes(ext);
+  const isPdf = mimeType === 'application/pdf' || ext === 'pdf';
+  const isText = mimeType.startsWith('text/') || ['txt', 'md', 'csv', 'json'].includes(ext);
   const officeViewUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(href)}`;
 
   useEffect(() => {
@@ -191,7 +233,8 @@ const ResourcePreviewModal = ({ resource, onClose }) => {
           )}
           {!canInlinePreview(ext) && !isOfficeDoc(ext) && (
             <div className="text-gray-600">
-              Preview not supported for this type. <a href={href} target="_blank" rel="noreferrer" className="text-indigo-600">Open/Download</a>
+              Preview not supported for this type.
+              <button type="button" onClick={() => openResourceInPlace(href)} className="text-indigo-600 ml-1">Open/Download</button>
             </div>
           )}
         </div>
@@ -573,6 +616,18 @@ const LessonPlanList = ({ course, onBack, onSelectPlan }) => {
     }
   };
 
+  const handleDeletePlan = async (plan) => {
+    if (!window.confirm(`确定删除章节“${plan.title}”吗？`)) return;
+    if (!window.confirm('章节下的教案内容、章节资源、章节测验和提交记录都会被删除，且不可恢复。')) return;
+    try {
+      await axios.delete(`${API_BASE}/teaching/chapters/${plan.id}`, { headers: authHeaders() });
+      await fetchPlans();
+      alert('章节已删除');
+    } catch (err) {
+      alert('删除章节失败: ' + (err.response?.data?.msg || err.message));
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4 mb-8">
@@ -602,7 +657,17 @@ const LessonPlanList = ({ course, onBack, onSelectPlan }) => {
             <div className="flex items-center gap-3">
               <button type="button" onClick={() => onSelectPlan(plan.id)} className="px-4 py-2 bg-indigo-100 text-indigo-700 rounded-lg text-sm">
                 {role === 'student' ? '查看练习' : '编辑章节'}
-              </button></div>
+              </button>
+              {role !== 'student' && (
+                <button
+                  type="button"
+                  onClick={() => handleDeletePlan(plan)}
+                  className="px-4 py-2 bg-red-50 text-red-700 rounded-lg text-sm"
+                >
+                  删除章节
+                </button>
+              )}
+            </div>
           </div>
         ))}
       </div>
@@ -1382,6 +1447,26 @@ const LessonPlanDetail = ({ planId, onBack }) => {
     }
   };
 
+  const handleDeleteAssessment = async (assessment) => {
+    if (!window.confirm(`确定删除测验“${assessment.title}”吗？`)) return;
+    if (!window.confirm('该测验的题目、提交记录和分析数据都会删除，但已进入题库的题目会保留。')) return;
+    try {
+      await axios.delete(`${API_BASE}/teaching/assessments/${assessment.id}`, { headers: authHeaders() });
+      if (Number(selectedAssessmentId) === Number(assessment.id)) {
+        setSelectedAssessmentId(null);
+      }
+      await loadAssessments();
+      await loadAnalytics();
+      setAssessmentDetailAnalytics(null);
+      setAiAnalytics(null);
+      setAiAnalyticsHistory([]);
+      setSubmissions([]);
+      alert('测验已删除');
+    } catch (err) {
+      alert('删除测验失败: ' + (err.response?.data?.msg || err.message));
+    }
+  };
+
   const handleStartAssessment = async (assessmentId) => {
     try {
       const res = await axios.get(`${API_BASE}/teaching/assessments/${assessmentId}`, { headers: authHeaders() });
@@ -1633,8 +1718,16 @@ const LessonPlanDetail = ({ planId, onBack }) => {
                   <div className="text-xs text-gray-500">{item.uploader_name || '-'} | {item.created_at}</div>
                 </div>
                 <div className="flex items-center gap-3 text-sm">
-                  <button type="button" onClick={() => setPreviewResource(item)} className="text-indigo-600 hover:text-indigo-800">预览</button>
-                  <a href={getResourceHref(item.url)} target="_blank" rel="noreferrer" className="text-blue-600 hover:text-blue-800">打开</a>
+                  {canPreviewResource(item) && item.file_exists !== false && (
+                    <button type="button" onClick={() => setPreviewResource(item)} className="text-indigo-600 hover:text-indigo-800">预览</button>
+                  )}
+                  {item.file_exists === false ? (
+                    <span className="text-red-500">文件缺失</span>
+                  ) : (
+                    <a href={getResourceContentHref(item)} target="_blank" rel="noreferrer" className="text-blue-600 hover:text-blue-800">
+                      {item.type === 'link' ? '打开' : '下载'}
+                    </a>
+                  )}
                 </div>
               </div>
             ))}
@@ -1714,7 +1807,8 @@ const LessonPlanDetail = ({ planId, onBack }) => {
                         查看提交
                       </button>
                       <>
-                          <button type="button" onClick={() => handleEditAssessment(item.id)} className="px-3 py-2 rounded border text-sm">编辑测验</button>
+                        <button type="button" onClick={() => handleEditAssessment(item.id)} className="px-3 py-2 rounded border text-sm">编辑测验</button>
+                        <button type="button" onClick={() => handleDeleteAssessment(item)} className="px-3 py-2 rounded border border-red-200 text-red-700 text-sm">删除测验</button>
                         {!item.is_pushed && (
                           <button
                             type="button"
@@ -2458,6 +2552,19 @@ const CourseResourceManagement = ({ course, onBack }) => {
     }
   };
 
+  const handleOpenResource = async (resource) => {
+    const href = resource.type === 'link' ? getResourceHref(resource.url) : `${API_HOST}${resource.download_url || resource.preview_url || resource.url}`;
+    try {
+      if (resource.type === 'link') {
+        openResourceInPlace(href);
+        return;
+      }
+      await triggerDownload(resource, href);
+    } catch (err) {
+      alert(`资源打开失败: ${err.message}`);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
@@ -2515,12 +2622,18 @@ const CourseResourceManagement = ({ course, onBack }) => {
                   <div className="text-xs text-gray-400">{resource.created_at}</div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <button type="button" onClick={() => setPreviewResource(resource)} className="text-indigo-600 hover:text-indigo-800 text-sm inline-flex items-center gap-1">
-                    <LinkIcon size={14} /> 查看
-                  </button>
-                  <a href={getResourceHref(resource.url)} target="_blank" rel="noreferrer" className="text-blue-600 hover:text-blue-800 text-sm inline-flex items-center gap-1">
-                    <LinkIcon size={14} /> Open
-                  </a>
+                  {canPreviewResource(resource) && resource.file_exists !== false && (
+                    <button type="button" onClick={() => setPreviewResource(resource)} className="text-indigo-600 hover:text-indigo-800 text-sm inline-flex items-center gap-1">
+                      <LinkIcon size={14} /> 预览
+                    </button>
+                  )}
+                  {resource.file_exists === false ? (
+                    <span className="text-red-500 text-sm">文件缺失</span>
+                  ) : (
+                    <button type="button" onClick={() => handleOpenResource(resource)} className="text-blue-600 hover:text-blue-800 text-sm inline-flex items-center gap-1">
+                      <LinkIcon size={14} /> {resource.type === 'link' ? '打开链接' : canPreviewResource(resource) ? '下载文件' : '打开/下载'}
+                    </button>
+                  )}
                   <button type="button" className="text-red-600 hover:text-red-800 text-sm" onClick={() => handleDelete(resource.id)}>删除</button>
                 </div>
               </div>
@@ -2583,4 +2696,3 @@ const CourseManagement = () => {
 };
 
 export default CourseManagement;
-

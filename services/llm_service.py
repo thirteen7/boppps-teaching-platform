@@ -260,6 +260,197 @@ class LLMService:
         return None
 
     @staticmethod
+    def _ensure_list(value):
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        if isinstance(value, str):
+            text = value.strip()
+            return [text] if text else []
+        return [value]
+
+    @staticmethod
+    def _ensure_dict(value):
+        return value if isinstance(value, dict) else {}
+
+    @staticmethod
+    def _normalize_question_item(item):
+        if not isinstance(item, dict):
+            return item
+
+        normalized = dict(item)
+        options = normalized.get("options")
+        if not isinstance(options, list):
+            alt_options = normalized.get("choices")
+            if isinstance(alt_options, list):
+                options = alt_options
+                normalized["options"] = alt_options
+
+        if isinstance(options, list):
+            normalized_options = []
+            option_texts = []
+            option_map = {}
+            for idx, opt in enumerate(options):
+                label = chr(ord("A") + idx)
+                if isinstance(opt, dict):
+                    opt_copy = dict(opt)
+                    text = (
+                        opt_copy.get("text")
+                        or opt_copy.get("value")
+                        or opt_copy.get("content")
+                        or opt_copy.get("label")
+                        or ""
+                    )
+                    text = str(text).strip()
+                    if text:
+                        opt_copy["text"] = text
+                        normalized_options.append(opt_copy)
+                        option_texts.append(text)
+                        option_map[label] = text
+                        if opt_copy.get("label"):
+                            option_map[str(opt_copy.get("label")).strip().upper()] = text
+                else:
+                    text = str(opt).strip()
+                    if text:
+                        normalized_options.append(text)
+                        option_texts.append(text)
+                        option_map[label] = text
+            normalized["options"] = normalized_options
+
+            answer = normalized.get("answer")
+            if answer is not None:
+                answer_text = str(answer).strip()
+                if answer_text.upper() in option_map:
+                    normalized["answer"] = option_map[answer_text.upper()]
+                elif answer_text in option_texts:
+                    normalized["answer"] = answer_text
+
+        stem = (
+            normalized.get("stem")
+            or normalized.get("question")
+            or normalized.get("statement")
+            or normalized.get("content")
+            or normalized.get("title")
+            or normalized.get("prompt")
+        )
+        if stem and not normalized.get("stem"):
+            normalized["stem"] = str(stem).strip()
+        return normalized
+
+    @classmethod
+    def _normalize_stage_payload(cls, stage, payload):
+        if not isinstance(payload, dict):
+            return payload
+
+        outputs = payload.get("outputs")
+        if not isinstance(outputs, dict):
+            return payload
+
+        outputs.setdefault("citations", [])
+
+        if stage == "bridge_in":
+            alias_map = {
+                "type": "hook_type",
+                "bridge_type": "hook_type",
+                "title": "hook_title",
+                "bridge_title": "hook_title",
+                "script": "hook_script",
+                "bridge_script": "hook_script",
+                "transition": "transition_to_objectives",
+                "transition_text": "transition_to_objectives",
+                "materials": "materials_needed",
+            }
+            for src, dst in alias_map.items():
+                if not outputs.get(dst) and outputs.get(src) is not None:
+                    outputs[dst] = outputs.get(src)
+            outputs["teacher_actions"] = cls._ensure_list(outputs.get("teacher_actions"))
+            outputs["student_actions"] = cls._ensure_list(outputs.get("student_actions"))
+            outputs["materials_needed"] = cls._ensure_list(outputs.get("materials_needed"))
+
+        if stage == "objective":
+            if not outputs.get("objectives") and isinstance(outputs.get("goals"), list):
+                outputs["objectives"] = outputs.get("goals")
+            if not outputs.get("objectives") and isinstance(outputs.get("learning_objectives"), list):
+                outputs["objectives"] = outputs.get("learning_objectives")
+            if isinstance(outputs.get("objectives"), list):
+                normalized_objectives = []
+                for item in outputs.get("objectives"):
+                    if not isinstance(item, dict):
+                        normalized_objectives.append(item)
+                        continue
+                    normalized_item = dict(item)
+                    if not normalized_item.get("statement"):
+                        normalized_item["statement"] = (
+                            normalized_item.get("objective")
+                            or normalized_item.get("goal")
+                            or normalized_item.get("description")
+                        )
+                    if not normalized_item.get("measurable_verb"):
+                        normalized_item["measurable_verb"] = (
+                            normalized_item.get("verb")
+                            or normalized_item.get("action")
+                        )
+                    if not normalized_item.get("success_criteria"):
+                        normalized_item["success_criteria"] = (
+                            normalized_item.get("standard")
+                            or normalized_item.get("criteria")
+                        )
+                    normalized_objectives.append(normalized_item)
+                outputs["objectives"] = normalized_objectives
+            if not outputs.get("alignment_checks") and outputs.get("alignment") is not None:
+                outputs["alignment_checks"] = outputs.get("alignment")
+            outputs["alignment_checks"] = cls._ensure_dict(outputs.get("alignment_checks"))
+
+        if stage in ["pre_assessment", "post_assessment"]:
+            questions = outputs.get("questions")
+            if isinstance(questions, list):
+                outputs["questions"] = [cls._normalize_question_item(q) for q in questions]
+            elif isinstance(outputs.get("items"), list):
+                outputs["questions"] = [cls._normalize_question_item(q) for q in outputs.get("items")]
+            if not outputs.get("timing_minutes") and outputs.get("duration_minutes") is not None:
+                outputs["timing_minutes"] = outputs.get("duration_minutes")
+            if stage == "pre_assessment" and not outputs.get("evaluation_focus") and outputs.get("diagnostic_focus") is not None:
+                outputs["evaluation_focus"] = outputs.get("diagnostic_focus")
+
+        if stage == "summary":
+            errs = outputs.get("common_errors_and_fixes")
+            if isinstance(errs, list):
+                normalized_errs = []
+                for item in errs:
+                    if not isinstance(item, dict):
+                        normalized_errs.append(item)
+                        continue
+                    normalized_item = dict(item)
+                    if not normalized_item.get("error") and normalized_item.get("common_error"):
+                        normalized_item["error"] = normalized_item.get("common_error")
+                    normalized_errs.append(normalized_item)
+                outputs["common_errors_and_fixes"] = normalized_errs
+
+        if stage == "participatory":
+            if not outputs.get("activities"):
+                for key in ["tasks", "steps", "activity_steps", "activity_list"]:
+                    if isinstance(outputs.get(key), list):
+                        outputs["activities"] = outputs.get(key)
+                        break
+            outputs["activities"] = cls._ensure_list(outputs.get("activities"))
+            outputs["teacher_actions"] = cls._ensure_list(outputs.get("teacher_actions"))
+            outputs["student_actions"] = cls._ensure_list(outputs.get("student_actions"))
+            if not outputs.get("artifacts"):
+                for key in ["outputs", "products", "deliverables"]:
+                    if outputs.get(key) is not None:
+                        outputs["artifacts"] = outputs.get(key)
+                        break
+            outputs["artifacts"] = cls._ensure_list(outputs.get("artifacts"))
+
+        if stage == "summary":
+            outputs["key_takeaways"] = cls._ensure_list(outputs.get("key_takeaways"))
+            outputs["minute_paper_questions"] = cls._ensure_list(outputs.get("minute_paper_questions"))
+            outputs["next_steps"] = cls._ensure_list(outputs.get("next_steps"))
+
+        return payload
+
+    @staticmethod
     def _normalize_stem(stem):
         if not stem:
             return ""
@@ -275,8 +466,14 @@ class LLMService:
             return ["Payload is not a JSON object"]
         if payload.get("stage") != stage:
             errors.append("Field 'stage' mismatch")
+        need_more_info = bool(payload.get("need_more_info"))
+        missing_info = payload.get("missing_info")
+        if need_more_info and not isinstance(missing_info, list):
+            errors.append("Field 'missing_info' must be an array when need_more_info=true")
         if "outputs" not in payload or not isinstance(payload.get("outputs"), dict):
             errors.append("Field 'outputs' missing or invalid")
+            return errors
+        if need_more_info:
             return errors
         outputs = payload.get("outputs") or {}
         for key in cls.STAGE_OUTPUT_KEYS.get(stage, []):
@@ -376,6 +573,7 @@ class LLMService:
                     if isinstance(item, dict):
                         err_text = (
                             item.get("error")
+                            or item.get("common_error")
                             or item.get("mistake")
                             or item.get("issue")
                             or item.get("problem")
@@ -490,7 +688,7 @@ class LLMService:
         if first.get("error"):
             return {"error": first.get("error"), "provider": provider}
 
-        parsed = cls._try_parse_json(first.get("text", ""))
+        parsed = cls._normalize_stage_payload(stage, cls._try_parse_json(first.get("text", "")))
         errors = cls._validate_stage_payload(stage, parsed, context=context)
         if not errors:
             return {
@@ -508,7 +706,7 @@ class LLMService:
                 "provider": provider,
             }
 
-        parsed_retry = cls._try_parse_json(second.get("text", ""))
+        parsed_retry = cls._normalize_stage_payload(stage, cls._try_parse_json(second.get("text", "")))
         retry_errors = cls._validate_stage_payload(stage, parsed_retry, context=context)
         if not retry_errors:
             return {
@@ -516,8 +714,13 @@ class LLMService:
                 "_meta": {"valid": True, "retry_used": True, "provider": provider},
             }
 
+        error_message = (
+            "Invalid structured output from LLM"
+            if isinstance(parsed_retry, dict)
+            else "Invalid JSON format from LLM"
+        )
         return {
-            "error": "Invalid JSON format from LLM",
+            "error": error_message,
             "raw": second.get("text", "") or first.get("text", ""),
             "validation_errors": retry_errors,
             "provider": provider,

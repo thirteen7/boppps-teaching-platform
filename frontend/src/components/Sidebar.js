@@ -25,14 +25,14 @@ const Sidebar = ({ user, activeTab, setActiveTab, onLogout }) => {
   ];
 
   return (
-    <aside className="w-64 bg-[#fdf9f1] border-r border-[#e0d6c8] flex flex-col fixed h-full z-10">
-      <div className="p-6 border-b border-[#ece3d6] flex items-center gap-3">
-        <div className="w-9 h-9 bg-[#7f5f3b] rounded-xl flex items-center justify-center text-white shadow-sm">
+    <aside className="app-sidebar w-64 flex flex-col fixed h-full z-10">
+      <div className="p-6 border-b border-[#dce9f7] flex items-center gap-3">
+        <div className="w-9 h-9 bg-[#2f7df6] rounded-xl flex items-center justify-center text-white shadow-sm">
           <GraduationCap size={20} />
         </div>
         <div>
-          <div className="text-[10px] tracking-[0.22em] text-[#8d846f] uppercase">Studio</div>
-          <span className="text-xl font-bold text-[#2b261f] display-font">BOPPPS</span>
+          <div className="text-[10px] tracking-[0.22em] text-[#8aa2bd] uppercase">Studio</div>
+          <span className="text-xl font-bold text-[#163456] display-font">BOPPPS</span>
         </div>
       </div>
 
@@ -44,33 +44,33 @@ const Sidebar = ({ user, activeTab, setActiveTab, onLogout }) => {
               key={item.id}
               type="button"
               onClick={() => setActiveTab(item.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+              className={`menu-button w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
                 activeTab === item.id
-                  ? 'bg-[#efe7da] text-[#5f4528] font-semibold border border-[#deceb8]'
-                  : 'text-[#5f5a4f] hover:bg-[#f4ede2]'
+                  ? 'menu-button-active bg-[#e8f2ff] text-[#2f7df6] font-semibold border border-[#cfe3fb] shadow-sm'
+                  : 'text-[#5f7897] hover:bg-[#f3f8ff]'
               }`}
             >
-              {item.icon}
+              <span className="motion-card-icon">{item.icon}</span>
               {item.label}
             </button>
           ))}
       </nav>
 
-      <div className="p-4 border-t border-[#ece3d6]">
+      <div className="p-4 border-t border-[#dce9f7]">
         <div className="flex items-center gap-3 px-4 py-3 mb-2">
-          <div className="w-8 h-8 rounded-full bg-[#e7dbc9] flex items-center justify-center text-[#6b5a45] font-bold">
+          <div className="w-8 h-8 rounded-full bg-[#dcecff] flex items-center justify-center text-[#2f7df6] font-bold">
             {user.name ? user.name.charAt(0).toUpperCase() : 'U'}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-[#2c281f] truncate">{user.name || user.username}</p>
-            <p className="text-xs text-[#8d846f] capitalize">{user.role}</p>
+            <p className="text-sm font-medium text-[#1b3555] truncate">{user.name || user.username}</p>
+            <p className="text-xs text-[#86a1be] capitalize">{user.role}</p>
           </div>
         </div>
 
         <button
           type="button"
           onClick={onLogout}
-          className="w-full flex items-center gap-2 px-4 py-2 text-sm text-[#b23f2b] hover:bg-[#f7e7e3] rounded-lg transition-colors"
+          className="w-full flex items-center gap-2 px-4 py-2 text-sm text-[#db4d67] hover:bg-[#fff1f4] rounded-xl transition-colors"
         >
           <LogOut size={16} />
           退出登录

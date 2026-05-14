@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
+import { API_BASE } from './api';
 
 import Sidebar from './components/Sidebar';
 import Login from './pages/Login';
@@ -11,8 +12,6 @@ import SystemLogs from './pages/SystemLogs';
 import ChangePassword from './pages/ChangePassword';
 import AISettings from './pages/AISettings';
 import QuestionBankManagement from './pages/QuestionBankManagement';
-
-const API_BASE = '/api';
 
 axios.interceptors.request.use(
   (config) => {
@@ -130,7 +129,7 @@ export default function App() {
   if (!authReady) {
     return (
       <div className="min-h-screen app-shell flex items-center justify-center">
-        <div className="muted">加载中...</div>
+        <div className="muted motion-panel">加载中...</div>
       </div>
     );
   }
@@ -148,7 +147,7 @@ export default function App() {
       <Sidebar user={user} activeTab={activeTab} setActiveTab={setActiveTab} onLogout={handleLogout} />
 
       <main className="flex-1 ml-64 p-8 max-w-[calc(100vw-16rem)]">
-        <header className="mb-8 surface-card p-5">
+        <header className="mb-8 surface-card motion-panel p-5">
           <div className="text-xs uppercase tracking-[0.2em] muted mb-2">BOPPPS Teaching Studio</div>
           <h1 className="text-3xl panel-title">
             {activeTab === 'dashboard' && '工作台'}
@@ -162,11 +161,14 @@ export default function App() {
           </h1>
         </header>
 
-        <div className="animate-fade-in">
+        <div key={activeTab} className="page-transition">
           {activeTab === 'dashboard' && (
-            <div className="surface-card p-10 relative overflow-hidden">
-              <div className="absolute right-0 top-0 w-72 h-72 rounded-full bg-[#efe7da] -translate-y-1/3 translate-x-1/3" />
-              <div className="absolute left-10 bottom-6 text-[84px] leading-none text-[#d8c7ab] font-serif pointer-events-none">“</div>
+            <div className="surface-card hero-welcome motion-panel p-10 relative overflow-hidden">
+              <div className="absolute right-0 top-0 w-80 h-80 rounded-full hero-glow -translate-y-1/3 translate-x-1/3" />
+              <div className="absolute left-10 bottom-6 text-[84px] leading-none text-[#bedcff] font-serif pointer-events-none motion-float">“</div>
+              <div className="relative inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium text-[#2f7df6] bg-white/80 border border-[#d7e5f4] mb-4">
+                智能教学工作台
+              </div>
               <h2 className="text-4xl panel-title mb-4 relative">欢迎回来，{user.name || user.username}</h2>
               <p className="muted max-w-2xl text-lg relative">
                 这里是你的教学设计工作区。先搭建目标，再连接测评和课堂活动，让每一节课都形成可追踪的学习闭环。

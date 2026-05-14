@@ -1,3 +1,9 @@
+from datetime import UTC, datetime
+
+from extensions import db
+from models import SystemLog
+
+
 def test_admin_user_management_and_logs(client, auth_headers):
     headers = auth_headers("admin")
 
@@ -18,6 +24,26 @@ def test_admin_user_management_and_logs(client, auth_headers):
     assert logs_response.status_code == 200
     actions = [item["action"] for item in logs_response.get_json()["data"]]
     assert any("teacher_new" in action for action in actions)
+
+
+def test_admin_logs_render_shanghai_time(client, auth_headers, app):
+    headers = auth_headers("admin")
+
+    with app.app_context():
+        db.session.add(SystemLog(
+            user_id=1,
+            username="admin",
+            action="timezone-check",
+            ip_address="127.0.0.1",
+            timestamp=datetime(2026, 5, 3, 4, 30, 0, tzinfo=UTC),
+        ))
+        db.session.commit()
+
+    logs_response = client.get("/api/admin/logs", headers=headers)
+    assert logs_response.status_code == 200
+
+    log_item = next(item for item in logs_response.get_json()["data"] if item["action"] == "timezone-check")
+    assert log_item["time"] == "2026-05-03 12:30:00"
 
 
 def test_admin_create_student_with_major_and_class(client, auth_headers):

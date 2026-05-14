@@ -1,7 +1,11 @@
 # Database models (User, Course, etc.) will be defined in this module.
 
-from datetime import datetime
+from datetime import UTC, datetime
 from extensions import db
+
+
+def utc_now():
+    return datetime.now(UTC)
 
 course_students = db.Table('course_students',
     db.Column('user_id', db.Integer, db.ForeignKey('users.id'), primary_key=True),
@@ -18,7 +22,7 @@ class User(db.Model):
     name = db.Column(db.String(50))
     major = db.Column(db.String(100), nullable=True)
     class_name = db.Column(db.String(100), nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
 
     enrolled_courses = db.relationship('Course', secondary=course_students, lazy='subquery',
         backref=db.backref('students', lazy=True))
@@ -31,7 +35,7 @@ class SystemLog(db.Model):
     username = db.Column(db.String(80))
     action = db.Column(db.String(200), nullable=False)
     ip_address = db.Column(db.String(50))
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    timestamp = db.Column(db.DateTime, default=utc_now)
 
 
 class AIProviderConfig(db.Model):
@@ -45,8 +49,8 @@ class AIProviderConfig(db.Model):
     enabled = db.Column(db.Boolean, nullable=False, default=True)
     is_default = db.Column(db.Boolean, nullable=False, default=False)
     extra_json = db.Column(db.JSON, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
 
 # 3. 课程表
 class Course(db.Model):
@@ -56,7 +60,7 @@ class Course(db.Model):
     code = db.Column(db.String(20), unique=True)
     objectives = db.Column(db.Text)
     teacher_id = db.Column(db.Integer, db.ForeignKey('users.id'))
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
 
     # Relationship to Lesson Plans
     lesson_plans = db.relationship('LessonPlan', backref='course', lazy=True)
@@ -74,7 +78,7 @@ class LessonPlan(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     course_id = db.Column(db.Integer, db.ForeignKey('courses.id'), nullable=False)
     title = db.Column(db.String(200), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
 
     # Relationships
     boppps_contents = db.relationship('BOPPPSContent', backref='lesson_plan', lazy=True)
@@ -89,8 +93,8 @@ class BOPPPSContent(db.Model):
     stage = db.Column(db.String(50), nullable=False)
     content = db.Column(db.Text) # Markdown or JSON content
     version = db.Column(db.Integer, default=1)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
 
 # 7. 测验表 (Assessment)
 class Assessment(db.Model):
@@ -102,7 +106,7 @@ class Assessment(db.Model):
     reveal_after_submit = db.Column(db.Boolean, nullable=False, default=False)
     is_pushed = db.Column(db.Boolean, nullable=False, default=False)
     pushed_at = db.Column(db.DateTime, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
 
     # Relationships
     questions = db.relationship('Question', backref='assessment', lazy=True)
@@ -131,7 +135,7 @@ class Submission(db.Model):
     score = db.Column(db.Float)
     status = db.Column(db.String(20), nullable=False, default='active')  # active, rejected
     reject_reason = db.Column(db.Text, nullable=True)
-    submitted_at = db.Column(db.DateTime, default=datetime.utcnow)
+    submitted_at = db.Column(db.DateTime, default=utc_now)
 
 
 class QuestionBankItem(db.Model):
@@ -148,7 +152,7 @@ class QuestionBankItem(db.Model):
     explanation = db.Column(db.Text, nullable=True)
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     creator = db.relationship('User', backref='question_bank_items')
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
 
 # 5. 教学资源表
 class Resource(db.Model):
@@ -163,4 +167,4 @@ class Resource(db.Model):
     # knowledge_scope: course (course-level permanent knowledge base)
     #                  chapter (chapter-level temporary supplemental material)
     knowledge_scope = db.Column(db.String(20), nullable=False, default='course')
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)

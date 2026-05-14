@@ -1,0 +1,19 @@
+Copy your existing MySQL data into the Docker database (runs only on first empty volume)
+
+1) From the machine that has your current MySQL (same user/db as config.py defaults):
+
+   mysqldump -u koppps -prootroot --databases koppps --single-transaction --routines --events --set-gtid-purged=OFF > docker/mysql/init/01-koppps.sql
+
+   If your root password differs, use -u root -p and adjust.
+
+2) Reset the compose volume if MySQL was already started without this file:
+
+   docker compose down -v
+
+3) Start again:
+
+   docker compose up --build
+
+Notes:
+- Files in docker/mysql/init/*.sql are executed once when the data volume is new.
+- Large dumps are gitignored (see .gitignore); keep them locally or in private storage.
