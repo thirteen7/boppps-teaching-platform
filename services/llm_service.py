@@ -8,7 +8,7 @@ from models import AIProviderConfig
 
 
 class LLMService:
-    DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434"
+    DEFAULT_OLLAMA_BASE_URL = getattr(Config, "OLLAMA_BASE_URL", "http://127.0.0.1:11434")
     DEFAULT_OLLAMA_MODEL = getattr(Config, "OLLAMA_MODEL", "qwen3:30b")
 
     SYSTEM_PROMPT = """

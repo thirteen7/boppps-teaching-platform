@@ -341,3 +341,47 @@ def test_ai_provider(provider_id):
         return api_response(msg='AI provider test failed', code=400, data=result)
     log_action(current_admin.get('id'), current_admin.get('username'), f'Test AI provider success: {item.name}')
     return api_response(msg='AI provider test success', data=result)
+
+
+# ─────────────────────────────────────────────────────────────
+#  系统初始化 / LLM 配置向导 相关接口
+# ─────────────────────────────────────────────────────────────
+
+@admin_bp.route('/system/llm-status', methods=['GET'])
+@admin_required()
+def system_llm_status():
+    """检查系统是否已配置 LLM provider (返回 configured: bool)。"""
+    has_provider = AIProviderConfig.query.filter_by(enabled=True).first() is not None
+    return api_response(data={'configured': has_provider})
+
+
+@admin_bp.route('/system/llm-test-connection', methods=['POST'])
+@admin_required()
+def system_llm_test_connection():
+    """使用前端传入的参数测试 LLM 连接（不保存到数据库）。"""
+    data = request.get_json(silent=True) or {}
+    provider_type = (data.get('provider_type') or '').strip()
+    base_url = (data.get('base_url') or '').strip().rstrip('/')
+    api_key = (data.get('api_key') or '').strip() or None
+    model = (data.get('model') or '').strip()
+
+    if provider_type not in ['ollama', 'openai_compatible']:
+        return api_response(msg='provider_type 必须是 ollama 或 openai_compatible', code=400)
+    if not base_url or not model:
+        return api_response(msg='base_url 和 model 为必填项', code=400)
+
+    provider = {
+        'provider_type': provider_type,
+        'base_url': base_url,
+        'api_key': api_key,
+        'model': model,
+        'extra_json': {},
+    }
+    try:
+        result = LLMService.test_provider_connection(provider)
+    except Exception as err:
+        return api_response(msg=f'连接测试失败: {err}', code=500, data={'ok': False, 'error': str(err)})
+
+    if not result.get('ok'):
+        return api_response(msg='连接测试失败', code=400, data=result)
+    return api_response(msg='连接测试成功', data=result)

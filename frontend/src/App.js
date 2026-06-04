@@ -11,6 +11,7 @@ import ResourceUpload from './pages/ResourceUpload';
 import SystemLogs from './pages/SystemLogs';
 import ChangePassword from './pages/ChangePassword';
 import AISettings from './pages/AISettings';
+import LLMSetupWizard from './pages/LLMSetupWizard';
 import QuestionBankManagement from './pages/QuestionBankManagement';
 
 axios.interceptors.request.use(
@@ -30,6 +31,20 @@ export default function App() {
   const [activeTab, setActiveTab] = useState(() => localStorage.getItem('active_tab') || 'dashboard');
   const [isRegistering, setIsRegistering] = useState(false);
   const [authReady, setAuthReady] = useState(false);
+  const [needsLLMSetup, setNeedsLLMSetup] = useState(false);
+
+  // ── 检测 LLM 配置状态（管理员首次登录时触发） ──
+  const checkLlmConfig = async (role) => {
+    if (role !== 'admin') return;
+    try {
+      const res = await axios.get(`${API_BASE}/admin/system/llm-status`);
+      if (res.data?.data?.configured === false) {
+        setNeedsLLMSetup(true);
+      }
+    } catch {
+      // 接口不存在或超时则跳过
+    }
+  };
 
   useEffect(() => {
     localStorage.setItem('active_tab', activeTab);
@@ -73,6 +88,9 @@ export default function App() {
             role: currentUser.role,
             name: currentUser.name,
           });
+
+          // ── 管理员首次登录：检查是否已配置 LLM ──
+          await checkLlmConfig(currentUser.role);
         } else {
           localStorage.removeItem('token');
           localStorage.removeItem('role');
@@ -94,6 +112,12 @@ export default function App() {
     localStorage.removeItem('role');
     localStorage.removeItem('active_tab');
     setUser(null);
+    setActiveTab('dashboard');
+    setNeedsLLMSetup(false);
+  };
+
+  const handleLLMSetupComplete = () => {
+    setNeedsLLMSetup(false);
     setActiveTab('dashboard');
   };
 
@@ -118,6 +142,10 @@ export default function App() {
         name: payload.name,
       });
       setActiveTab('dashboard');
+
+      // ── 管理员登录后检测是否需要 LLM 配置 ──
+      await checkLlmConfig(payload.role);
+
       return true;
     } catch (err) {
       const errMsg = err.response?.data?.msg || err.response?.data?.message || err.message || '登录失败';
@@ -140,6 +168,22 @@ export default function App() {
 
   if (!user) {
     return <Login handleLogin={handleLogin} onGoToRegister={() => setIsRegistering(true)} />;
+  }
+
+  // ── 管理员未配置 LLM 时强制进入配置向导 ──
+  if (needsLLMSetup) {
+    return (
+      <div className="min-h-screen app-shell flex">
+        <Sidebar user={user} activeTab={activeTab} setActiveTab={setActiveTab} onLogout={handleLogout} />
+        <main className="flex-1 ml-64 p-8 max-w-[calc(100vw-16rem)]">
+          <header className="mb-8 surface-card motion-panel p-5">
+            <div className="text-xs uppercase tracking-[0.2em] muted mb-2">BOPPPS Teaching Studio</div>
+            <h1 className="text-3xl panel-title">AI 配置向导</h1>
+          </header>
+          <LLMSetupWizard onComplete={handleLLMSetupComplete} />
+        </main>
+      </div>
+    );
   }
 
   return (

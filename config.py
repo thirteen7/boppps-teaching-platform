@@ -24,6 +24,7 @@ class Config:
     JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'super-secret-key')
 
     # LLM 配置
+    OLLAMA_BASE_URL = os.getenv('OLLAMA_BASE_URL', 'http://127.0.0.1:11434')
     OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'qwen3:30b')
 
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))

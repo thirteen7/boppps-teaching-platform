@@ -1,6 +1,6 @@
 services:
   db:
-    image: mysql:8.0
+    image: docker.m.daocloud.io/library/mysql:8.0
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     environment:
       MYSQL_DATABASE: koppps
@@ -30,9 +30,21 @@ services:
       - "5000:5000"
     volumes:
       - ./static/uploads/resources:/app/static/uploads/resources
+      # LLM 配置文件持久化目录 — 首次启动自动生成 llm.env
+      - ./config:/app/config
     restart: unless-stopped
     environment:
       SQLALCHEMY_DATABASE_URI: mysql+pymysql://koppps:rootroot@db:3306/koppps?charset=utf8mb4
+      # 大模型 API 配置（通过交互式向导 / 环境变量）：
+      # 方式 A — Ollama（本地）
+      # OLLAMA_BASE_URL=http://host.docker.internal:11434
+      # OLLAMA_MODEL=qwen3:30b
+      #
+      # 方式 B — OpenAI 兼容 API
+      # LLM_PROVIDER=openai_compatible
+      # OPENAI_BASE_URL=https://api.openai.com/v1
+      # OPENAI_API_KEY=sk-xxxx
+      # OPENAI_MODEL=gpt-4
 
 volumes:
   mysql_data:
