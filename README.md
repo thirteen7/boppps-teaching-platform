@@ -81,6 +81,42 @@ docker compose up --build
 - 前端 / 后端统一访问：`http://localhost:5000`
 - MySQL：`localhost:3307`
 
+## 离线一键部署
+
+如果你要把项目交给网络环境不稳定的用户，推荐使用离线部署包。
+
+在有网机器上先执行：
+
+```bash
+./scripts/prepare-offline-package.sh
+```
+
+默认会生成适合大多数 Windows 电脑的 `linux/amd64` 离线镜像；如果需要给 Apple Silicon Mac 分发，可以执行：
+
+```bash
+DOCKER_PLATFORM=linux/arm64 ./scripts/prepare-offline-package.sh
+```
+
+执行完成后会生成：
+
+- `dist/offline-package/`
+- `dist/offline-package.tar.gz`
+
+把这个目录或压缩包发给最终用户，再让对方在已经安装好 Docker 的机器上执行：
+
+```bash
+cd offline-package
+./scripts/start-offline.sh
+```
+
+这个流程会自动：
+
+- 导入本地离线镜像
+- 启动 MySQL 和应用容器
+- 避免现场下载 `npm` / `pip` / Docker 基础镜像
+
+详细说明见 [docs/offline-deployment.md](/Users/liujiaqi/Desktop/BOPPPS/boppps-teaching-platform/docs/offline-deployment.md)。
+
 ## 默认账号
 
 项目首次启动后会自动创建以下默认账号：
@@ -128,4 +164,3 @@ npm run test:e2e
 - 前端源码在 `frontend/src`
 - 上传资源默认保存到 `static/uploads/resources`
 - AI 配置可以在管理员首次登录后通过页面向导完成
-

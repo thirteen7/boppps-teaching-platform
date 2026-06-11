@@ -1,0 +1,39 @@
+services:
+  db:
+    image: boppps-mysql:8.0-offline
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_DATABASE: koppps
+      MYSQL_USER: koppps
+      MYSQL_PASSWORD: rootroot
+      MYSQL_ROOT_PASSWORD: rootroot
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-prootroot"]
+      interval: 5s
+      timeout: 5s
+      retries: 45
+      start_period: 90s
+
+  app:
+    image: boppps-app:offline
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./static/uploads/resources:/app/static/uploads/resources
+      - ./config:/app/config
+    restart: unless-stopped
+    environment:
+      SQLALCHEMY_DATABASE_URI: mysql+pymysql://koppps:rootroot@db:3306/koppps?charset=utf8mb4
+
+volumes:
+  mysql_data:

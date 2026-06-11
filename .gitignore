@@ -32,3 +32,6 @@ static/uploads/resources/
 playwright-report/
 test-results/
 coverage/
+
+# Offline packaging artifacts
+dist/
